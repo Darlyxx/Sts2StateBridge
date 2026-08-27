@@ -215,6 +215,83 @@ from sts2_agent import SimpleSts2Agent
 agent = SimpleSts2Agent.from_env()
 ```
 
+## MCP Server
+
+`sts2-mcp` 是供外部 AI Host 使用的标准只读 MCP Server。它通过 stdio 通信，不监听新端口、不需要模型 API Key，也不包含 LangChain；使用哪个模型以及何时调用工具由 Codex、Claude Desktop、VS Code 扩展等 Host 决定。
+
+提供的工具：
+
+- `get_game_overview`：阶段、角色资源和构筑摘要。
+- `get_combat_state`：战斗、手牌、敌人、意图和合法候选。
+- `get_interaction`：地图、奖励、事件、商店、休息点和宝箱。
+- `get_full_snapshot`：完整原始快照，仅在其他工具信息不足时使用。
+
+手动启动命令：
+
+```powershell
+cd agent
+uv sync
+uv run sts2-mcp
+```
+
+手动启动后没有普通终端输出是正常现象：服务器正在等待 MCP Host 通过 stdin 发送协议消息。
+
+### 我们自己的 MCP 配置
+
+当前项目在本机的实际配置为：
+
+```json
+{
+  "mcpServers": {
+    "sts2": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "E:\\lhy\\vs code\\slay the spire project\\agent",
+        "run",
+        "sts2-mcp"
+      ]
+    }
+  }
+}
+```
+
+### 其他用户的 MCP 配置
+
+下载本项目后，必须把下面的占位内容替换成自己电脑上的项目绝对路径：
+
+```json
+{
+  "mcpServers": {
+    "sts2": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "<替换为你下载本项目后的绝对路径>\\agent",
+        "run",
+        "sts2-mcp"
+      ]
+    }
+  }
+}
+```
+
+Windows JSON 路径中的一个反斜杠必须写成两个 `\\`。例如实际路径 `D:\Projects\Sts2StateBridge\agent` 在 JSON 中应写成：
+
+```json
+"D:\\Projects\\Sts2StateBridge\\agent"
+```
+
+`127.0.0.1:38281` 始终表示使用者自己的电脑和游戏，普通用户不需要修改。如果本地 Mod 改用了其他端口，可以在服务器配置中增加：
+
+```json
+"env": {
+  "STS2_BRIDGE_URL": "http://127.0.0.1:新端口"
+}
+```
+
+MCP 工具每次调用都会读取最新状态，并返回对应的 `phase` 和 `state_id`。当前所有工具都明确标记为只读、非破坏和幂等。
+
 ### 常见问题
 
 - 无法连接本地桥接器：确认游戏已启动、Mod 已启用，并检查 `/health`。
@@ -234,7 +311,7 @@ uv run pytest
 
 1. 完善只读协议文档与版本兼容测试。
 2. 完善 Python 客户端和紧凑的 Agent 视图。
-3. 封装 MCP Server，先提供读取工具。
+3. 完善 MCP Host 配置与兼容性验证。
 4. 在 `state_id`、严格 readiness 和请求幂等保护下加入安全动作接口。
 5. 增加自动化测试、发布包和版本迁移说明。
 

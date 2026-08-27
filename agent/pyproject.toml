@@ -1,18 +1,20 @@
 [project]
 name = "sts2-agent"
-version = "0.2.0"
+version = "0.3.0"
 description = "Read-only AI client for Sts2StateBridge"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "langchain>=1.0.0,<2",
     "langchain-openai>=1.0.0,<2",
+    "mcp>=2.0.0,<3",
     "openai>=2.0.0,<3",
     "python-dotenv>=1.0.0,<2",
 ]
 
 [project.scripts]
 sts2-agent = "sts2_agent.cli:main"
+sts2-mcp = "sts2_agent.mcp_server:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0.0,<10"]
