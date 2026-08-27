@@ -29,18 +29,21 @@ Mod 在游戏进程内读取当前状态，并通过仅监听本机的 HTTP 接�
 .
 ├─ mod/
 │  └─ Sts2StateBridge/       # 游戏内 C# Mod
+├─ agent/                     # Python AI 分析客户端
 ├─ .gitignore
 ├─ LICENSE
 └─ README.md
 ```
 
-后续版本计划在根目录增加独立的 Python 客户端与 MCP Server。游戏 Mod、Python 层和 AI 策略层将保持分离。
+游戏 Mod、Python 层和未来的 MCP Server 保持分离。
 
 ## 环境要求
 
 - Windows
 - 《杀戮尖塔 2》Steam 版本
 - .NET SDK 9
+- Python 3.11 或更高版本
+- uv
 - PowerShell
 
 验证 SDK：
@@ -119,11 +122,87 @@ Invoke-RestMethod http://127.0.0.1:38281/snapshot
 - 不上传存档、遥测或游戏状态，不访问外部网络。
 - 未揭示的地图节点和未知抽牌顺序不会暴露给 AI。
 
+## AI 客户端
+
+Python 客户端每次提问都会读取一份新的 `/snapshot`，默认只向模型发送当前决策所需的精简状态。它不会控制游戏，也不会向本地 Bridge 写入数据。
+
+### 配置 DeepSeek
+
+先进入 Python 项目并创建本地配置：
+
+```powershell
+cd agent
+Copy-Item .env.example .env
+```
+
+打开 `agent/.env`，填入自己的 Key：
+
+```dotenv
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=你的_DeepSeek_API_Key
+LLM_MODEL=deepseek-v4-flash
+LLM_TIMEOUT_SECONDS=60
+STS2_BRIDGE_URL=http://127.0.0.1:38281
+```
+
+`.env` 已被 Git 忽略，不要把真实 Key 写入 `.env.example`、源码、截图或提交记录。其他 OpenAI 兼容服务只需更换 URL、Key 和模型名。
+
+安装锁定依赖：
+
+```powershell
+uv sync
+```
+
+### 在 VS Code 终端提问
+
+先启动游戏并启用 Mod，然后运行：
+
+```powershell
+uv run sts2-agent
+```
+
+直接输入问题即可。可用命令包括 `/snapshot`、`/refresh`、`/clear`、`/help` 和 `/quit`。单次提问可以使用：
+
+```powershell
+uv run sts2-agent ask "分析当前局面，推荐这一回合的出牌顺序"
+```
+
+如需调试完整原始快照：
+
+```powershell
+uv run sts2-agent --full-state
+```
+
+### 在 Python 代码中调用
+
+```python
+from sts2_agent import Sts2Agent
+
+agent = Sts2Agent.from_env()
+answer = agent.ask("现在应该怎么打？")
+print(answer.text)
+print(answer.phase, answer.state_id)
+```
+
+### 常见问题
+
+- 无法连接本地桥接器：确认游戏已启动、Mod 已启用，并检查 `/health`。
+- 快照返回 `503`：游戏正处于界面切换或动画中，稍后重试。
+- API 返回 `401`：检查 `.env` 中的 Key。
+- API 返回 `429`：检查账户余额或等待限流恢复。
+- 请求超时：检查网络，或适当提高 `LLM_TIMEOUT_SECONDS`。
+
+运行离线测试：
+
+```powershell
+uv run pytest
+```
+
 ## 路线图
 
 1. 完善只读协议文档与版本兼容测试。
-2. 增加 Python 客户端和紧凑的 Agent 视图。
-3. 封装 MCP Server，只提供读取工具。
+2. 完善 Python 客户端和紧凑的 Agent 视图。
+3. 封装 MCP Server，先提供读取工具。
 4. 在 `state_id`、严格 readiness 和请求幂等保护下加入安全动作接口。
 5. 增加自动化测试、发布包和版本迁移说明。
 
