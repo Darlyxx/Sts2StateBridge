@@ -9,7 +9,7 @@ internal static class BridgeServer
 {
     private const string Prefix = "http://127.0.0.1:38281/";
     private const string HealthResponse =
-        "{\"ok\":true,\"bridge\":\"Sts2StateBridge\",\"bridge_version\":\"0.7.0\",\"game_version_target\":\"v0.111.0\",\"write_enabled\":false}";
+        "{\"ok\":true,\"bridge\":\"Sts2StateBridge\",\"bridge_version\":\"0.8.0\",\"game_version_target\":\"v0.111.0\",\"write_enabled\":false}";
 
     private static readonly object Sync = new();
     private static HttpListener? _listener;

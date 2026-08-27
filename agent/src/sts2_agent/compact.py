@@ -38,6 +38,22 @@ def _compact_map(map_data: Any) -> dict:
     }
 
 
+def _normalize_combat(combat: Any) -> dict:
+    result = _pick(combat, COMBAT_KEYS)
+    player = result.get("player")
+    if not isinstance(player, dict):
+        return result
+
+    normalized_player = dict(player)
+    if "mechanics" not in normalized_player and "stars" in normalized_player:
+        normalized_player["mechanics"] = [
+            {"type": "stars", "current": normalized_player["stars"]}
+        ]
+    normalized_player.pop("stars", None)
+    result["player"] = normalized_player
+    return result
+
+
 def compact_snapshot(snapshot: dict, full_state: bool = False) -> dict:
     if full_state:
         return snapshot
@@ -47,7 +63,7 @@ def compact_snapshot(snapshot: dict, full_state: bool = False) -> dict:
     }
     result["run"] = _pick(snapshot.get("run"), RUN_KEYS)
     if snapshot.get("combat") is not None:
-        result["combat"] = _pick(snapshot["combat"], COMBAT_KEYS)
+        result["combat"] = _normalize_combat(snapshot["combat"])
     elif snapshot.get("interaction") is not None:
         interaction = _pick(snapshot["interaction"], INTERACTION_KEYS)
         if "map" in interaction:

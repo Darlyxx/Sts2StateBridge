@@ -6,7 +6,7 @@ Mod 在游戏进程内读取当前状态，并通过仅监听本机的 HTTP 接�
 
 ## 当前状态
 
-- Mod 版本：`0.7.0`
+- Mod 版本：`0.8.0`
 - 兼容目标：《杀戮尖塔 2》`v0.111.0`
 - 运行时：`.NET 9`
 - HTTP 地址：`http://127.0.0.1:38281`
@@ -93,7 +93,7 @@ Invoke-RestMethod http://127.0.0.1:38281/health
 {
   "ok": true,
   "bridge": "Sts2StateBridge",
-  "bridge_version": "0.7.0",
+  "bridge_version": "0.8.0",
   "game_version_target": "v0.111.0",
   "write_enabled": false
 }
@@ -113,6 +113,14 @@ Invoke-RestMethod http://127.0.0.1:38281/snapshot
 - `state_id`：当前决策状态的短期指纹
 
 客户端必须把索引视为仅对当前快照有效。未来提交操作时必须携带对应的 `state_id`，避免使用过期状态。
+
+### 角色专属战斗机制
+
+`combat.player.mechanics` 是可组合的机制列表，当前支持 `stars`、`osty` 和 `orbs`。它描述玩家此刻实际拥有的能力，而不是只根据 `run.character_id` 推断；因此其他角色通过卡牌、遗物或 Mod 获得相应机制时也能被读取。没有专属机制时返回空数组。
+
+手牌与战斗牌堆中的卡牌同时提供 `star_cost` 和 `costs_star_x`。`star_cost` 是当前效果修正后的实际星能费用；不使用星能或具有 X 星能费用时为 `null`。
+
+专属机制及卡牌星能费用均参与 `state_id`，资源、奥斯蒂状态或充能球队列发生变化时会生成新的状态指纹。
 
 ## 安全与隐私
 

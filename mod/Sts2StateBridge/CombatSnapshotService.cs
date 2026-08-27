@@ -39,8 +39,8 @@ internal static class CombatSnapshotService
                 Block = player.Creature.Block,
                 Energy = player.PlayerCombatState.Energy,
                 MaxEnergy = player.MaxEnergy,
-                Stars = player.PlayerCombatState.Stars,
-                Powers = BuildPowers(player.Creature)
+                Powers = BuildPowers(player.Creature),
+                Mechanics = BuildMechanics(player)
             },
             Hand = player.PlayerCombatState.Hand.Cards
                 .Select((card, index) => BuildHandCard(combatState, card, index))
@@ -92,6 +92,8 @@ internal static class CombatSnapshotService
             Upgraded = SafeReadNullable(() => card.IsUpgraded),
             EnergyCost = SafeReadNullable(() => card.EnergyCost.GetWithModifiers(CostModifiers.All)),
             CostsX = SafeReadNullable(() => card.EnergyCost.CostsX),
+            StarCost = ReadCurrentStarCost(card),
+            CostsStarX = SafeReadNullable(() => card.HasStarCostX) ?? false,
             Enchantment = RunInventoryService.BuildEnchantment(card),
             TargetType = SafeRead(() => card.TargetType.ToString()),
             RequiresTarget = SafeReadNullable(() => RequiresTarget(card.TargetType)),
@@ -170,6 +172,8 @@ internal static class CombatSnapshotService
             Upgraded = SafeReadNullable(() => card.IsUpgraded),
             EnergyCost = SafeReadNullable(() => card.EnergyCost.GetWithModifiers(CostModifiers.All)),
             CostsX = SafeReadNullable(() => card.EnergyCost.CostsX),
+            StarCost = ReadCurrentStarCost(card),
+            CostsStarX = SafeReadNullable(() => card.HasStarCostX) ?? false,
             Enchantment = RunInventoryService.BuildEnchantment(card),
             RulesText = SafeRead(() => GetRulesText(card))
         };
@@ -234,6 +238,113 @@ internal static class CombatSnapshotService
         catch
         {
             return Array.Empty<CombatRelicSnapshotPayload>();
+        }
+    }
+
+    private static object[] BuildMechanics(Player player)
+    {
+        List<object> mechanics = new();
+        PlayerCombatState? combatState = player.PlayerCombatState;
+        if (combatState is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            bool hasStarCards = combatState.AllCards.Any(HasStarCost);
+            bool isRegent = string.Equals(
+                player.Character.Id.Entry,
+                "REGENT",
+                StringComparison.OrdinalIgnoreCase);
+            if (isRegent || combatState.Stars != 0 || hasStarCards)
+            {
+                mechanics.Add(new StarsMechanicSnapshotPayload
+                {
+                    Current = combatState.Stars
+                });
+            }
+        }
+        catch
+        {
+            // A character-specific mechanism must not invalidate the combat snapshot.
+        }
+
+        try
+        {
+            Creature? osty = player.Osty;
+            bool isNecrobinder = string.Equals(
+                player.Character.Id.Entry,
+                "NECROBINDER",
+                StringComparison.OrdinalIgnoreCase);
+            if (osty is not null || isNecrobinder)
+            {
+                mechanics.Add(new OstyMechanicSnapshotPayload
+                {
+                    InstanceId = osty is null ? null : GetInstanceId(osty, "osty"),
+                    CurrentHp = osty is null ? null : SafeReadNullable(() => osty.CurrentHp),
+                    MaxHp = osty is null ? null : SafeReadNullable(() => osty.MaxHp),
+                    Block = osty is null ? null : SafeReadNullable(() => osty.Block),
+                    IsAlive = osty is null ? player.IsOstyAlive : SafeReadNullable(() => osty.IsAlive),
+                    IsMissing = player.IsOstyMissing,
+                    Powers = osty is null ? [] : BuildPowers(osty)
+                });
+            }
+        }
+        catch
+        {
+            // Continue with any other mechanisms that are still readable.
+        }
+
+        try
+        {
+            var queue = combatState.OrbQueue;
+            if (queue is not null && (queue.Capacity > 0 || queue.Orbs.Count > 0))
+            {
+                mechanics.Add(new OrbsMechanicSnapshotPayload
+                {
+                    Capacity = queue.Capacity,
+                    Orbs = queue.Orbs.Select((orb, index) => new OrbSnapshotPayload
+                    {
+                        Index = index,
+                        InstanceId = GetInstanceId(orb, $"orb:{index}"),
+                        OrbId = SafeRead(() => orb.Id.Entry),
+                        Name = ReadLocalizedProperty(orb, "Title"),
+                        PassiveValue = SafeReadNullable(() => orb.PassiveVal),
+                        EvokeValue = SafeReadNullable(() => orb.EvokeVal),
+                        RulesText = ReadModelRulesText(orb)
+                    }).ToArray()
+                });
+            }
+        }
+        catch
+        {
+            // Continue with the mechanisms already collected.
+        }
+
+        return mechanics.ToArray();
+    }
+
+    private static bool HasStarCost(CardModel card)
+    {
+        return SafeRead(() => card.HasStarCostX)
+            || SafeRead(() => card.CanonicalStarCost >= 0);
+    }
+
+    private static int? ReadCurrentStarCost(CardModel card)
+    {
+        try
+        {
+            if (card.HasStarCostX || card.CanonicalStarCost < 0)
+            {
+                return null;
+            }
+
+            return card.CurrentStarCost;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -662,11 +773,11 @@ internal sealed class CombatPlayerSnapshotPayload
     [JsonPropertyName("max_energy")]
     public int MaxEnergy { get; init; }
 
-    [JsonPropertyName("stars")]
-    public int Stars { get; init; }
-
     [JsonPropertyName("powers")]
     public CombatPowerSnapshotPayload[] Powers { get; init; } = [];
+
+    [JsonPropertyName("mechanics")]
+    public object[] Mechanics { get; init; } = [];
 }
 
 internal sealed class CombatHandCardSnapshotPayload
@@ -691,6 +802,12 @@ internal sealed class CombatHandCardSnapshotPayload
 
     [JsonPropertyName("costs_x")]
     public bool? CostsX { get; init; }
+
+    [JsonPropertyName("star_cost")]
+    public int? StarCost { get; init; }
+
+    [JsonPropertyName("costs_star_x")]
+    public bool CostsStarX { get; init; }
 
     [JsonPropertyName("enchantment")]
     public CardEnchantmentSnapshotPayload? Enchantment { get; init; }
@@ -830,6 +947,12 @@ internal sealed class CombatPileCardSnapshotPayload
     [JsonPropertyName("costs_x")]
     public bool? CostsX { get; init; }
 
+    [JsonPropertyName("star_cost")]
+    public int? StarCost { get; init; }
+
+    [JsonPropertyName("costs_star_x")]
+    public bool CostsStarX { get; init; }
+
     [JsonPropertyName("enchantment")]
     public CardEnchantmentSnapshotPayload? Enchantment { get; init; }
 
@@ -916,4 +1039,76 @@ internal sealed class CombatActionSnapshotPayload
 
     [JsonPropertyName("target_index")]
     public int? TargetIndex { get; init; }
+}
+
+internal sealed class StarsMechanicSnapshotPayload
+{
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = "stars";
+
+    [JsonPropertyName("current")]
+    public int Current { get; init; }
+}
+
+internal sealed class OstyMechanicSnapshotPayload
+{
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = "osty";
+
+    [JsonPropertyName("instance_id")]
+    public string? InstanceId { get; init; }
+
+    [JsonPropertyName("current_hp")]
+    public int? CurrentHp { get; init; }
+
+    [JsonPropertyName("max_hp")]
+    public int? MaxHp { get; init; }
+
+    [JsonPropertyName("block")]
+    public int? Block { get; init; }
+
+    [JsonPropertyName("is_alive")]
+    public bool? IsAlive { get; init; }
+
+    [JsonPropertyName("is_missing")]
+    public bool IsMissing { get; init; }
+
+    [JsonPropertyName("powers")]
+    public CombatPowerSnapshotPayload[] Powers { get; init; } = [];
+}
+
+internal sealed class OrbsMechanicSnapshotPayload
+{
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = "orbs";
+
+    [JsonPropertyName("capacity")]
+    public int Capacity { get; init; }
+
+    [JsonPropertyName("orbs")]
+    public OrbSnapshotPayload[] Orbs { get; init; } = [];
+}
+
+internal sealed class OrbSnapshotPayload
+{
+    [JsonPropertyName("index")]
+    public int Index { get; init; }
+
+    [JsonPropertyName("instance_id")]
+    public required string InstanceId { get; init; }
+
+    [JsonPropertyName("orb_id")]
+    public string? OrbId { get; init; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    [JsonPropertyName("passive_value")]
+    public decimal? PassiveValue { get; init; }
+
+    [JsonPropertyName("evoke_value")]
+    public decimal? EvokeValue { get; init; }
+
+    [JsonPropertyName("rules_text")]
+    public string? RulesText { get; init; }
 }

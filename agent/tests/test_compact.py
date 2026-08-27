@@ -29,3 +29,31 @@ def test_map_only_keeps_current_and_reachable_nodes():
 def test_full_state_is_unchanged():
     snapshot = {"state_id": "x", "custom": {"value": None}}
     assert compact_snapshot(snapshot, full_state=True) is snapshot
+
+
+def test_combat_keeps_composable_mechanics_and_star_costs():
+    snapshot = {
+        "state_id": "mechanics-1", "phase": "combat", "in_run": True, "in_combat": True,
+        "combat": {
+            "player": {"mechanics": [
+                {"type": "stars", "current": 2},
+                {"type": "osty", "current_hp": 9, "max_hp": 20},
+                {"type": "orbs", "capacity": 3, "orbs": [{"orb_id": "LIGHTNING"}]},
+            ]},
+            "hand": [{"card_id": "STAR_CARD", "star_cost": 2, "costs_star_x": False}],
+        },
+    }
+    combat = compact_snapshot(snapshot)["combat"]
+    assert [item["type"] for item in combat["player"]["mechanics"]] == ["stars", "osty", "orbs"]
+    assert combat["hand"][0]["star_cost"] == 2
+
+
+def test_legacy_stars_are_normalized_to_mechanics_without_mutating_input():
+    snapshot = {
+        "phase": "combat", "in_combat": True,
+        "combat": {"player": {"stars": 4}, "hand": []},
+    }
+    combat = compact_snapshot(snapshot)["combat"]
+    assert combat["player"]["mechanics"] == [{"type": "stars", "current": 4}]
+    assert "stars" not in combat["player"]
+    assert snapshot["combat"]["player"]["stars"] == 4
