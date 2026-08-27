@@ -1,0 +1,62 @@
+# .NET build outputs
+**/bin/
+**/obj/
+artifacts/
+
+# User- and machine-specific .NET files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+local.props
+Directory.Build.local.props
+
+# Visual Studio / VS Code / Rider
+.vs/
+.vscode/
+.idea/
+*.DotSettings.user
+
+# Build and release packages
+*.nupkg
+*.snupkg
+*.zip
+release/
+dist/
+
+# Game binaries and local deployment copies
+sts2.dll
+GodotSharp.dll
+0Harmony.dll
+SlayTheSpire2.exe
+Mods/
+
+# Game saves, logs and local captures
+*.run
+*.save
+*.log
+logs/
+screenshots/
+
+# Python (reserved for the future client/MCP layer)
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~

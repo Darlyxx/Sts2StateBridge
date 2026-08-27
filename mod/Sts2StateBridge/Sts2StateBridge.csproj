@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <Target Name="ValidateSts2ManagedDir" BeforeTargets="ResolveReferences">
+    <Error
+      Condition="'$(Sts2ManagedDir)' == ''"
+      Text="Sts2ManagedDir is required. Pass -p:Sts2ManagedDir=&quot;path\to\data_sts2_windows_x86_64&quot;." />
+    <Error
+      Condition="'$(Sts2ManagedDir)' != '' and !Exists('$(Sts2ManagedDir)\sts2.dll')"
+      Text="Could not find sts2.dll under Sts2ManagedDir: $(Sts2ManagedDir)" />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="sts2">
+      <HintPath>$(Sts2ManagedDir)\sts2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(Sts2ManagedDir)\GodotSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(Sts2ManagedDir)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
