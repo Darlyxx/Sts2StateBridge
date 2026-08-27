@@ -124,7 +124,7 @@ Invoke-RestMethod http://127.0.0.1:38281/snapshot
 
 ## AI 客户端
 
-Python 客户端每次提问都会读取一份新的 `/snapshot`，默认只向模型发送当前决策所需的精简状态。它不会控制游戏，也不会向本地 Bridge 写入数据。
+Python 客户端默认使用 LangChain 只读工具 Agent。模型会根据问题选择游戏概览、战斗状态、当前交互或完整快照工具；每次工具调用都会读取最新 `/snapshot`。它不会控制游戏，也不会向本地 Bridge 写入数据。
 
 ### 配置 DeepSeek
 
@@ -153,6 +153,20 @@ STS2_BRIDGE_URL=http://127.0.0.1:38281
 uv sync
 ```
 
+不用 uv 的用户可以使用自动生成的 `requirements.txt`：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+`requirements.txt` 来自 `pyproject.toml` 和 `uv.lock`，不要手工修改。依赖变化后由维护者重新生成：
+
+```powershell
+uv export --format requirements-txt --no-dev --no-hashes --default-index https://pypi.org/simple --output-file requirements.txt
+```
+
 ### 在 VS Code 终端提问
 
 先启动游戏并启用 Mod，然后运行：
@@ -167,10 +181,19 @@ uv run sts2-agent
 uv run sts2-agent ask "分析当前局面，推荐这一回合的出牌顺序"
 ```
 
-如需调试完整原始快照：
+默认 Agent 可自主调用四个只读工具：`get_game_overview`、`get_combat_state`、`get_interaction` 和 `get_full_snapshot`。工具循环有次数上限，终端只显示工具读取提示与最终回答，不展示内部推理。
+
+如 DeepSeek 的工具调用暂时不可用，可切换到原有固定流程：
 
 ```powershell
-uv run sts2-agent --full-state
+uv run sts2-agent --simple
+uv run sts2-agent --simple ask "分析当前局面"
+```
+
+完整原始状态开关仅用于 simple 模式：
+
+```powershell
+uv run sts2-agent --simple --full-state
 ```
 
 ### 在 Python 代码中调用
@@ -184,6 +207,14 @@ print(answer.text)
 print(answer.phase, answer.state_id)
 ```
 
+固定流程也可以从 Python 调用：
+
+```python
+from sts2_agent import SimpleSts2Agent
+
+agent = SimpleSts2Agent.from_env()
+```
+
 ### 常见问题
 
 - 无法连接本地桥接器：确认游戏已启动、Mod 已启用，并检查 `/health`。
@@ -191,6 +222,7 @@ print(answer.phase, answer.state_id)
 - API 返回 `401`：检查 `.env` 中的 Key。
 - API 返回 `429`：检查账户余额或等待限流恢复。
 - 请求超时：检查网络，或适当提高 `LLM_TIMEOUT_SECONDS`。
+- Agent 达到最大调用次数：缩小问题范围，或使用 `--simple` 回退模式。
 
 运行离线测试：
 

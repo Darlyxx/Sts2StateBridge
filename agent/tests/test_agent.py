@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from sts2_agent import Settings, Sts2Agent
+from sts2_agent import Settings, SimpleSts2Agent
 
 
 class FakeBridge:
@@ -26,7 +26,7 @@ def make_agent():
     completions = FakeCompletions()
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     settings = Settings(api_key="not-a-real-key", model="deepseek-v4-flash")
-    return Sts2Agent(settings, bridge=FakeBridge(), client=client), completions
+    return SimpleSts2Agent(settings, bridge=FakeBridge(), client=client), completions
 
 
 def test_ask_returns_state_metadata_and_records_history():

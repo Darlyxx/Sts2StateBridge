@@ -4,9 +4,11 @@ import argparse
 import json
 import sys
 
-from .agent import LlmError, Sts2Agent
+from .agent import Sts2Agent
+from .agent_types import LlmError
 from .bridge import BridgeError
 from .config import ConfigurationError
+from .simple_agent import SimpleSts2Agent
 
 
 HELP = """命令：
@@ -20,7 +22,8 @@ HELP = """命令：
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="读取 STS2 状态并向 OpenAI 兼容模型提问")
-    parser.add_argument("--full-state", action="store_true", help="向模型发送完整原始快照")
+    parser.add_argument("--simple", action="store_true", help="使用固定单快照流程，不启用 LangChain 工具 Agent")
+    parser.add_argument("--full-state", action="store_true", help="simple 模式下向模型发送完整原始快照")
     subparsers = parser.add_subparsers(dest="command")
     ask = subparsers.add_parser("ask", help="单次提问")
     ask.add_argument("question")
@@ -28,16 +31,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_stream(agent: Sts2Agent, question: str, full_state: bool) -> None:
-    state, chunks = agent.ask_stream(question, full_state=full_state)
-    print(f"\n[阶段: {state.get('phase', 'unknown')} | state_id: {state.get('state_id', 'none')}]\n")
+def _print_stream(agent, question: str, full_state: bool) -> None:
+    def tool_notice(name: str) -> None:
+        labels = {
+            "get_game_overview": "游戏概览",
+            "get_combat_state": "战斗状态",
+            "get_interaction": "当前交互",
+            "get_full_snapshot": "完整快照",
+        }
+        print(f"\n[正在读取{labels.get(name, name)}...]\n")
+
+    state, chunks = agent.ask_stream(question, full_state=full_state, on_tool_call=tool_notice)
+    print()
     for text in chunks:
         print(text, end="", flush=True)
-    print("\n")
+    print(f"\n\n[阶段: {state.get('phase', 'unknown')} | state_id: {state.get('state_id', 'none')}]\n")
 
 
-def run_repl(agent: Sts2Agent, full_state: bool) -> int:
-    print("STS2 Agent 已启动。输入 /help 查看命令，输入问题开始分析。")
+def run_repl(agent, full_state: bool, simple: bool) -> int:
+    mode = "simple" if simple else "LangChain"
+    print(f"STS2 Agent 已启动（{mode} 模式）。输入 /help 查看命令，输入问题开始分析。")
     while True:
         try:
             question = input("\n你> ").strip()
@@ -73,11 +86,11 @@ def run_repl(agent: Sts2Agent, full_state: bool) -> int:
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        agent = Sts2Agent.from_env()
+        agent = SimpleSts2Agent.from_env() if args.simple else Sts2Agent.from_env()
         if args.command == "ask":
             _print_stream(agent, args.question, args.full_state or args.ask_full_state)
             return 0
-        return run_repl(agent, args.full_state)
+        return run_repl(agent, args.full_state, args.simple)
     except (ConfigurationError, BridgeError, LlmError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
