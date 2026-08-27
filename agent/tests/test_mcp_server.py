@@ -30,6 +30,14 @@ class CountingBridge:
             "interaction": None,
         }
 
+    def execute_action(self, state_id, action_id):
+        return {
+            "accepted": True,
+            "state_id": state_id,
+            "action_id": action_id,
+            "action_type": "end_turn",
+        }
+
 
 class RecoveringBridge(CountingBridge):
     def get_snapshot(self):
@@ -40,18 +48,25 @@ class RecoveringBridge(CountingBridge):
 
 
 @pytest.mark.anyio
-async def test_mcp_lists_only_read_only_zero_argument_tools():
+async def test_mcp_lists_read_tools_and_one_confirmed_write_tool():
     async with Client(create_mcp_server(CountingBridge())) as client:
         listed = await client.list_tools()
     assert {tool.name for tool in listed.tools} == {
-        "get_game_overview", "get_combat_state", "get_interaction", "get_full_snapshot"
+        "get_game_overview", "get_combat_state", "get_interaction", "get_full_snapshot",
+        "execute_action",
     }
-    for item in listed.tools:
+    for item in [tool for tool in listed.tools if tool.name != "execute_action"]:
         assert item.input_schema.get("properties") == {}
         assert item.annotations.read_only_hint is True
         assert item.annotations.destructive_hint is False
         assert item.annotations.idempotent_hint is True
         assert item.annotations.open_world_hint is False
+    execute = next(tool for tool in listed.tools if tool.name == "execute_action")
+    assert set(execute.input_schema["properties"]) == {"state_id", "action_id"}
+    assert execute.annotations.read_only_hint is False
+    assert execute.annotations.destructive_hint is True
+    assert execute.annotations.idempotent_hint is False
+    assert execute.annotations.open_world_hint is False
 
 
 @pytest.mark.anyio
@@ -82,6 +97,22 @@ async def test_mcp_tool_error_does_not_end_session():
 
 
 @pytest.mark.anyio
+async def test_mcp_execute_action_returns_structured_acceptance():
+    async with Client(create_mcp_server(CountingBridge())) as client:
+        result = await client.call_tool(
+            "execute_action",
+            {"state_id": "state-1", "action_id": "end_turn"},
+        )
+    assert result.is_error is False
+    assert result.structured_content == {
+        "accepted": True,
+        "state_id": "state-1",
+        "action_id": "end_turn",
+        "action_type": "end_turn",
+    }
+
+
+@pytest.mark.anyio
 async def test_stdio_server_initializes_without_stdout_noise():
     agent_dir = Path(__file__).resolve().parents[1]
     params = StdioServerParameters(
@@ -90,4 +121,4 @@ async def test_stdio_server_initializes_without_stdout_noise():
     )
     async with Client(params, read_timeout_seconds=20) as client:
         listed = await client.list_tools()
-    assert len(listed.tools) == 4
+    assert len(listed.tools) == 5

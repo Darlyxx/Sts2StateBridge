@@ -1,16 +1,16 @@
 # Sts2StateBridge
 
-`Sts2StateBridge` 是一个面向《杀戮尖塔 2》AI Agent 的本地只读状态桥接 Mod。
+`Sts2StateBridge` 是一个面向《杀戮尖塔 2》AI Agent 的本地状态桥接 Mod。
 
-Mod 在游戏进程内读取当前状态，并通过仅监听本机的 HTTP 接口输出 JSON。当前版本不会执行出牌、选择奖励或其他游戏操作。
+Mod 在游戏进程内读取当前状态，并通过仅监听本机的 HTTP 接口输出 JSON。写操作默认关闭；用户显式开启后，可提交经过状态版本和候选白名单校验的战斗动作。
 
 ## 当前状态
 
-- Mod 版本：`0.8.0`
+- Mod 版本：`0.9.0`
 - 兼容目标：《杀戮尖塔 2》`v0.111.0`
 - 运行时：`.NET 9`
 - HTTP 地址：`http://127.0.0.1:38281`
-- 写操作：禁用
+- 写操作：默认禁用，可由本机配置显式开启
 
 当前可读取：
 
@@ -77,6 +77,8 @@ mod/Sts2StateBridge/bin/Release/net9.0/Sts2StateBridge.dll
 3. 启动游戏并启用 `Sts2StateBridge`。
 4. 重启游戏使 Mod 生效。
 
+如需启用动作接口，再将 `Sts2StateBridge.config.example.json` 复制到相同的 `Mods` 目录并改名为 `Sts2StateBridge.config.json`，把 `write_enabled` 改为 `true`，然后重启游戏。缺少配置、配置无效或值为 `false` 时，写操作始终关闭。真实本机配置不会提交到 Git。
+
 不要将 `sts2.dll`、`GodotSharp.dll`、`0Harmony.dll` 或其他游戏文件复制到本项目或上传到 GitHub。
 
 ## HTTP API
@@ -93,7 +95,7 @@ Invoke-RestMethod http://127.0.0.1:38281/health
 {
   "ok": true,
   "bridge": "Sts2StateBridge",
-  "bridge_version": "0.8.0",
+  "bridge_version": "0.9.0",
   "game_version_target": "v0.111.0",
   "write_enabled": false
 }
@@ -122,11 +124,30 @@ Invoke-RestMethod http://127.0.0.1:38281/snapshot
 
 专属机制及卡牌星能费用均参与 `state_id`，资源、奥斯蒂状态或充能球队列发生变化时会生成新的状态指纹。
 
+### 执行当前候选动作
+
+只有 `/health` 返回 `write_enabled=true` 时，`POST /action` 才可用。请求只能提交同一个最新快照中已有的 `state_id` 和 `action_id`：
+
+```powershell
+$body = @{
+  state_id = "当前快照的 state_id"
+  action_id = "当前 combat.actions 中的 action_id"
+} | ConvertTo-Json
+
+Invoke-RestMethod http://127.0.0.1:38281/action `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+首版支持 `play_card`、`use_potion` 和 `end_turn`。成功接受返回 HTTP `202`；调用方随后必须重新读取快照。过期状态、重复使用同一状态、非候选动作或动画期间操作都会被拒绝。
+
 ## 安全与隐私
 
 - 服务只绑定 `127.0.0.1`，不会监听局域网地址。
-- 当前版本没有 POST 动作接口，`write_enabled=false`。
-- 游戏对象读取统一在 Godot 主线程执行。
+- 写操作默认关闭，只有本机配置显式开启后才接受 `POST /action`。
+- 读取、校验和动作入队统一在 Godot 主线程执行。
+- 动作必须来自最新快照的候选列表，同一 `state_id` 最多接受一个动作。
 - 不上传存档、遥测或游戏状态，不访问外部网络。
 - 未揭示的地图节点和未知抽牌顺序不会暴露给 AI。
 
@@ -225,7 +246,7 @@ agent = SimpleSts2Agent.from_env()
 
 ## MCP Server
 
-`sts2-mcp` 是供外部 AI Host 使用的标准只读 MCP Server。它通过 stdio 通信，不监听新端口、不需要模型 API Key，也不包含 LangChain；使用哪个模型以及何时调用工具由 Codex、Claude Desktop、VS Code 扩展等 Host 决定。
+`sts2-mcp` 是供外部 AI Host 使用的标准 MCP Server。它通过 stdio 通信，不监听新端口、不需要模型 API Key，也不包含 LangChain；使用哪个模型以及何时调用工具由 Codex、Claude Desktop、VS Code 扩展等 Host 决定。
 
 提供的工具：
 
@@ -233,6 +254,9 @@ agent = SimpleSts2Agent.from_env()
 - `get_combat_state`：战斗、手牌、敌人、意图和合法候选。
 - `get_interaction`：地图、奖励、事件、商店、休息点和宝箱。
 - `get_full_snapshot`：完整原始快照，仅在其他工具信息不足时使用。
+- `execute_action(state_id, action_id)`：执行最新快照中的一个候选动作；写配置关闭时不可用。
+
+四个状态工具标记为只读；`execute_action` 标记为非只读、可能改变游戏且非幂等。应使用能够在每次写工具调用前请求用户确认的 MCP Host。
 
 手动启动命令：
 
@@ -298,7 +322,7 @@ Windows JSON 路径中的一个反斜杠必须写成两个 `\\`。例如实际�
 }
 ```
 
-MCP 工具每次调用都会读取最新状态，并返回对应的 `phase` 和 `state_id`。当前所有工具都明确标记为只读、非破坏和幂等。
+MCP 状态工具每次调用都会读取最新状态，并返回对应的 `phase` 和 `state_id`。执行动作后必须再次读取，不能继续使用旧状态中的候选。
 
 ### 常见问题
 
@@ -320,7 +344,7 @@ uv run pytest
 1. 完善只读协议文档与版本兼容测试。
 2. 完善 Python 客户端和紧凑的 Agent 视图。
 3. 完善 MCP Host 配置与兼容性验证。
-4. 在 `state_id`、严格 readiness 和请求幂等保护下加入安全动作接口。
+4. 扩展非战斗候选动作，同时复用统一的 `execute_action` 接口。
 5. 增加自动化测试、发布包和版本迁移说明。
 
 ## 免责声明

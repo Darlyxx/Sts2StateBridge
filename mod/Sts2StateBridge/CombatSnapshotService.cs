@@ -408,7 +408,7 @@ internal static class CombatSnapshotService
         return actions.ToArray();
     }
 
-    private static string GetInstanceId(object value, string fallback)
+    internal static string GetInstanceId(object value, string fallback)
     {
         object? netId = value.GetType().GetProperty("NetId")?.GetValue(value);
         if (netId is not null)

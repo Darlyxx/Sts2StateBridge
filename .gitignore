@@ -31,6 +31,8 @@ GodotSharp.dll
 0Harmony.dll
 SlayTheSpire2.exe
 Mods/
+Sts2StateBridge.config.json
+!Sts2StateBridge.config.example.json
 
 # Game saves, logs and local captures
 *.run

@@ -9,6 +9,7 @@ public static class ModEntry
     public static void Initialize()
     {
         Log.Info("[Sts2StateBridge] initialized");
+        BridgeConfiguration.Load();
         GameThread.Initialize();
         BridgeServer.Start();
     }
