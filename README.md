@@ -38,7 +38,7 @@ mcp/server                     独立 stdio MCP Server
 ## 当前版本与能力
 
 - Mod：`0.9.0`，目标游戏 `v0.111.0`，使用 `.NET 9`
-- MCP Server：`0.6.0`，Python 3.11+
+- MCP Server：`0.9.0`，Python 3.11+
 - Agent：`0.6.0`，Python 3.11+
 - Bridge：`http://127.0.0.1:38281`，只监听本机
 - 写操作：默认关闭，必须由本机配置明确开启

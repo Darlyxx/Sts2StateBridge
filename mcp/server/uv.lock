@@ -732,7 +732,7 @@ wheels = [
 
 [[package]]
 name = "sts2-mcp"
-version = "0.6.0"
+version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

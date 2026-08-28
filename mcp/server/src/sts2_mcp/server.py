@@ -23,7 +23,7 @@ def create_mcp_server(bridge: BridgeClient | None = None) -> MCPServer:
             "Only call execute_action with a state_id and action_id returned by the same latest snapshot. "
             "Never claim an action succeeded unless the tool returns accepted=true."
         ),
-        version="0.6.0",
+        version="0.9.0",
         log_level="WARNING",
     )
 
