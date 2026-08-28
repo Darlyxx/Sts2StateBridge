@@ -1,276 +1,113 @@
 # Sts2StateBridge
 
-`Sts2StateBridge` 是一个面向《杀戮尖塔 2》AI Agent 的本地状态桥接 Mod。
+面向《杀戮尖塔 2》AI 的本地 Bridge、标准 MCP Server 与可选 LangChain Agent。项目分为独立三层：已有自己 Agent 的用户只需使用 MCP 套件；想直接聊天的用户可以使用项目附带的 Agent。
 
-Mod 在游戏进程内读取当前状态，并通过仅监听本机的 HTTP 接口输出 JSON。写操作默认关闭；用户显式开启后，可提交经过状态版本和候选白名单校验的战斗动作。
+## 架构
 
-## 当前状态
-
-- Mod 版本：`0.9.0`
-- 兼容目标：《杀戮尖塔 2》`v0.111.0`
-- 运行时：`.NET 9`
-- HTTP 地址：`http://127.0.0.1:38281`
-- 写操作：默认禁用，可由本机配置显式开启
-
-当前可读取：
-
-- 主菜单、局内、战斗和非战斗阶段
-- 角色、生命、金币、楼层、章节和进阶等级
-- 完整牌组、升级和附魔
-- 遗物、药水、Power、手牌和战斗牌堆
-- 敌人生命、状态和意图伤害
-- 地图节点、连线、当前位置和可达路线
-- 战斗奖励、卡牌奖励、宝箱、事件、远古遗物、休息点和商店
-- 当前合法的只读动作候选与防过期 `state_id`
-
-## 项目结构
+```text
+游戏
+  ↕ 本机 HTTP（127.0.0.1:38281）
+mcp/mod/Sts2StateBridge        C# 游戏 Mod
+  ↕
+mcp/server                     独立 stdio MCP Server
+  ↕
+├─ 你自己的 MCP Host / Agent
+└─ agent                       项目附带的 LangChain Agent（可选）
+```
 
 ```text
 .
-├─ mod/
-│  └─ Sts2StateBridge/       # 游戏内 C# Mod
-├─ agent/                     # Python AI 分析客户端
+├─ mcp/
+│  ├─ mod/Sts2StateBridge/     # 游戏内 C# Bridge Mod
+│  └─ server/                  # 独立 Python MCP Server 与测试
+├─ agent/                      # 可选 LangChain/DeepSeek 客户端
 ├─ .gitignore
 ├─ LICENSE
 └─ README.md
 ```
 
-游戏 Mod、Python 层和未来的 MCP Server 保持分离。
+关键边界：
+
+- Mod 负责在 Godot 主线程读取状态、校验并执行允许的动作。
+- MCP Server 负责把 Bridge 包装成标准工具，不包含模型、LangChain 或 API Key。
+- 项目自带 Agent 也只调用 MCP，不再直接访问 Bridge。
+- 第三方已有 Agent 时，不需要安装 `agent/`。
+
+## 当前版本与能力
+
+- Mod：`0.9.0`，目标游戏 `v0.111.0`，使用 `.NET 9`
+- MCP Server：`0.6.0`，Python 3.11+
+- Agent：`0.6.0`，Python 3.11+
+- Bridge：`http://127.0.0.1:38281`，只监听本机
+- 写操作：默认关闭，必须由本机配置明确开启
+
+读取范围包括角色、构筑、地图、各类非战斗交互、战斗手牌与牌堆、敌人及意图，以及星能、奥斯蒂、充能球等角色机制。所有可决策状态包含 `state_id`，用于防止操作过期状态。
+
+MCP 工具：
+
+- `get_game_overview`：阶段、角色资源与构筑摘要。
+- `get_combat_state`：玩家、手牌、牌堆、敌人、意图和合法候选。
+- `get_interaction`：地图、奖励、事件、商店、休息点和宝箱。
+- `get_full_snapshot`：完整原始快照。
+- `execute_action(state_id, action_id)`：执行最新快照中的白名单动作。
+
+前四个工具只读且幂等。`execute_action` 会改变游戏，非幂等，应由 MCP Host 在调用前向用户确认。
 
 ## 环境要求
 
-- Windows
-- 《杀戮尖塔 2》Steam 版本
-- .NET SDK 9
+- Windows 与 Steam 版《杀戮尖塔 2》
+- .NET SDK 9（构建 Mod 时需要）
 - Python 3.11 或更高版本
-- uv
+- [uv](https://docs.astral.sh/uv/)
 - PowerShell
 
-验证 SDK：
+## 构建和安装 Mod
+
+先完全退出游戏。游戏程序集只作为本地编译引用，不会复制进构建产物，也不应提交到 Git。
 
 ```powershell
-dotnet --version
-```
-
-## 构建
-
-游戏程序集只作为本地编译引用，不会复制进构建产物，也不应提交到 Git。
-
-```powershell
-dotnet build .\mod\Sts2StateBridge\Sts2StateBridge.csproj `
+dotnet build .\mcp\mod\Sts2StateBridge\Sts2StateBridge.csproj `
   -c Release `
   -p:Sts2ManagedDir="E:\SteamLibrary\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64"
 ```
 
-成功后 DLL 位于：
+将以下文件复制到游戏的 `Mods` 目录：
 
-```text
-mod/Sts2StateBridge/bin/Release/net9.0/Sts2StateBridge.dll
-```
+- `mcp/mod/Sts2StateBridge/bin/Release/net9.0/Sts2StateBridge.dll`
+- `mcp/mod/Sts2StateBridge/Sts2StateBridge.json`
 
-## 安装
-
-1. 正常退出游戏。
-2. 将以下两个文件复制到游戏的 `Mods` 目录：
-   - `Sts2StateBridge.dll`
-   - `mod/Sts2StateBridge/Sts2StateBridge.json`
-3. 启动游戏并启用 `Sts2StateBridge`。
-4. 重启游戏使 Mod 生效。
-
-如需启用动作接口，再将 `Sts2StateBridge.config.example.json` 复制到相同的 `Mods` 目录并改名为 `Sts2StateBridge.config.json`，把 `write_enabled` 改为 `true`，然后重启游戏。缺少配置、配置无效或值为 `false` 时，写操作始终关闭。真实本机配置不会提交到 Git。
-
-不要将 `sts2.dll`、`GodotSharp.dll`、`0Harmony.dll` 或其他游戏文件复制到本项目或上传到 GitHub。
-
-## HTTP API
-
-### 健康检查
+启动游戏并启用 Mod，随后可验证：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:38281/health
-```
-
-示例：
-
-```json
-{
-  "ok": true,
-  "bridge": "Sts2StateBridge",
-  "bridge_version": "0.9.0",
-  "game_version_target": "v0.111.0",
-  "write_enabled": false
-}
-```
-
-### 游戏快照
-
-```powershell
 Invoke-RestMethod http://127.0.0.1:38281/snapshot
 ```
 
-快照的主要区域：
+不要把 `sts2.dll`、`GodotSharp.dll`、`0Harmony.dll` 或其他游戏文件放进仓库。
 
-- `run`：整局长期状态与构筑
-- `combat`：当前战斗状态；非战斗时为 `null`
-- `interaction`：地图、奖励、事件、商店等当前非战斗选择
-- `state_id`：当前决策状态的短期指纹
+### 启用写操作
 
-客户端必须把索引视为仅对当前快照有效。未来提交操作时必须携带对应的 `state_id`，避免使用过期状态。
+写操作默认关闭。需要测试动作时，将 `mcp/mod/Sts2StateBridge/Sts2StateBridge.config.example.json` 复制到游戏 `Mods` 目录，改名为 `Sts2StateBridge.config.json`，将 `write_enabled` 改为 `true`，然后重启游戏。
 
-### 角色专属战斗机制
+当前只接受快照候选中的 `play_card`、`use_potion` 和 `end_turn`。请求必须同时携带最新的 `state_id` 与 `action_id`；同一个状态只接受一次动作。真实本机配置不会提交到 Git。
 
-`combat.player.mechanics` 是可组合的机制列表，当前支持 `stars`、`osty` 和 `orbs`。它描述玩家此刻实际拥有的能力，而不是只根据 `run.character_id` 推断；因此其他角色通过卡牌、遗物或 Mod 获得相应机制时也能被读取。没有专属机制时返回空数组。
+## 只使用 MCP（已有自己的 Agent）
 
-手牌与战斗牌堆中的卡牌同时提供 `star_cost` 和 `costs_star_x`。`star_cost` 是当前效果修正后的实际星能费用；不使用星能或具有 X 星能费用时为 `null`。
-
-专属机制及卡牌星能费用均参与 `state_id`，资源、奥斯蒂状态或充能球队列发生变化时会生成新的状态指纹。
-
-### 执行当前候选动作
-
-只有 `/health` 返回 `write_enabled=true` 时，`POST /action` 才可用。请求只能提交同一个最新快照中已有的 `state_id` 和 `action_id`：
+### 方式一：clone 仓库
 
 ```powershell
-$body = @{
-  state_id = "当前快照的 state_id"
-  action_id = "当前 combat.actions 中的 action_id"
-} | ConvertTo-Json
-
-Invoke-RestMethod http://127.0.0.1:38281/action `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body $body
-```
-
-首版支持 `play_card`、`use_potion` 和 `end_turn`。成功接受返回 HTTP `202`；调用方随后必须重新读取快照。过期状态、重复使用同一状态、非候选动作或动画期间操作都会被拒绝。
-
-## 安全与隐私
-
-- 服务只绑定 `127.0.0.1`，不会监听局域网地址。
-- 写操作默认关闭，只有本机配置显式开启后才接受 `POST /action`。
-- 读取、校验和动作入队统一在 Godot 主线程执行。
-- 动作必须来自最新快照的候选列表，同一 `state_id` 最多接受一个动作。
-- 不上传存档、遥测或游戏状态，不访问外部网络。
-- 未揭示的地图节点和未知抽牌顺序不会暴露给 AI。
-
-## AI 客户端
-
-Python 客户端默认使用 LangChain 只读工具 Agent。模型会根据问题选择游戏概览、战斗状态、当前交互或完整快照工具；每次工具调用都会读取最新 `/snapshot`。它不会控制游戏，也不会向本地 Bridge 写入数据。
-
-### 配置 DeepSeek
-
-先进入 Python 项目并创建本地配置：
-
-```powershell
-cd agent
-Copy-Item .env.example .env
-```
-
-打开 `agent/.env`，填入自己的 Key：
-
-```dotenv
-LLM_BASE_URL=https://api.deepseek.com
-LLM_API_KEY=你的_DeepSeek_API_Key
-LLM_MODEL=deepseek-v4-flash
-LLM_TIMEOUT_SECONDS=60
-STS2_BRIDGE_URL=http://127.0.0.1:38281
-```
-
-`.env` 已被 Git 忽略，不要把真实 Key 写入 `.env.example`、源码、截图或提交记录。其他 OpenAI 兼容服务只需更换 URL、Key 和模型名。
-
-安装锁定依赖：
-
-```powershell
+git clone <仓库地址>
+cd <仓库目录>\mcp\server
 uv sync
 ```
 
-不用 uv 的用户可以使用自动生成的 `requirements.txt`：
+你只需要使用 `mcp/`，无需进入或安装 `agent/`。由于游戏 Mod 也在 `mcp/mod`，clone 后可以自行构建 Mod。
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
+### 方式二：GitHub Release
 
-`requirements.txt` 来自 `pyproject.toml` 和 `uv.lock`，不要手工修改。依赖变化后由维护者重新生成：
+发布 Release 时可提供只含 `mcp/` 的压缩包。用户解压后安装其中的 Mod，并在 `mcp/server` 执行 `uv sync`。Release 适合普通用户；clone 适合需要查看源码、更新或参与开发的用户。
 
-```powershell
-uv export --format requirements-txt --no-dev --no-hashes --default-index https://pypi.org/simple --output-file requirements.txt
-```
-
-### 在 VS Code 终端提问
-
-先启动游戏并启用 Mod，然后运行：
-
-```powershell
-uv run sts2-agent
-```
-
-直接输入问题即可。可用命令包括 `/snapshot`、`/refresh`、`/clear`、`/help` 和 `/quit`。单次提问可以使用：
-
-```powershell
-uv run sts2-agent ask "分析当前局面，推荐这一回合的出牌顺序"
-```
-
-默认 Agent 可自主调用四个只读工具：`get_game_overview`、`get_combat_state`、`get_interaction` 和 `get_full_snapshot`。工具循环有次数上限，终端只显示工具读取提示与最终回答，不展示内部推理。
-
-如 DeepSeek 的工具调用暂时不可用，可切换到原有固定流程：
-
-```powershell
-uv run sts2-agent --simple
-uv run sts2-agent --simple ask "分析当前局面"
-```
-
-完整原始状态开关仅用于 simple 模式：
-
-```powershell
-uv run sts2-agent --simple --full-state
-```
-
-### 在 Python 代码中调用
-
-```python
-from sts2_agent import Sts2Agent
-
-agent = Sts2Agent.from_env()
-answer = agent.ask("现在应该怎么打？")
-print(answer.text)
-print(answer.phase, answer.state_id)
-```
-
-固定流程也可以从 Python 调用：
-
-```python
-from sts2_agent import SimpleSts2Agent
-
-agent = SimpleSts2Agent.from_env()
-```
-
-## MCP Server
-
-`sts2-mcp` 是供外部 AI Host 使用的标准 MCP Server。它通过 stdio 通信，不监听新端口、不需要模型 API Key，也不包含 LangChain；使用哪个模型以及何时调用工具由 Codex、Claude Desktop、VS Code 扩展等 Host 决定。
-
-提供的工具：
-
-- `get_game_overview`：阶段、角色资源和构筑摘要。
-- `get_combat_state`：战斗、手牌、敌人、意图和合法候选。
-- `get_interaction`：地图、奖励、事件、商店、休息点和宝箱。
-- `get_full_snapshot`：完整原始快照，仅在其他工具信息不足时使用。
-- `execute_action(state_id, action_id)`：执行最新快照中的一个候选动作；写配置关闭时不可用。
-
-四个状态工具标记为只读；`execute_action` 标记为非只读、可能改变游戏且非幂等。应使用能够在每次写工具调用前请求用户确认的 MCP Host。
-
-手动启动命令：
-
-```powershell
-cd agent
-uv sync
-uv run sts2-mcp
-```
-
-手动启动后没有普通终端输出是正常现象：服务器正在等待 MCP Host 通过 stdin 发送协议消息。
-
-### 我们自己的 MCP 配置
-
-当前项目在本机的实际配置为：
+无论使用哪种方式，MCP Host 配置中的 `--directory` 都必须替换为自己电脑上 `mcp/server` 的绝对路径：
 
 ```json
 {
@@ -279,7 +116,7 @@ uv run sts2-mcp
       "command": "uv",
       "args": [
         "--directory",
-        "E:\\lhy\\vs code\\slay the spire project\\agent",
+        "<替换为你的绝对路径>\\mcp\\server",
         "run",
         "sts2-mcp"
       ]
@@ -288,9 +125,7 @@ uv run sts2-mcp
 }
 ```
 
-### 其他用户的 MCP 配置
-
-下载本项目后，必须把下面的占位内容替换成自己电脑上的项目绝对路径：
+本机当前仓库的配置示例：
 
 ```json
 {
@@ -299,7 +134,7 @@ uv run sts2-mcp
       "command": "uv",
       "args": [
         "--directory",
-        "<替换为你下载本项目后的绝对路径>\\agent",
+        "E:\\lhy\\vs code\\slay the spire project\\mcp\\server",
         "run",
         "sts2-mcp"
       ]
@@ -308,13 +143,7 @@ uv run sts2-mcp
 }
 ```
 
-Windows JSON 路径中的一个反斜杠必须写成两个 `\\`。例如实际路径 `D:\Projects\Sts2StateBridge\agent` 在 JSON 中应写成：
-
-```json
-"D:\\Projects\\Sts2StateBridge\\agent"
-```
-
-`127.0.0.1:38281` 始终表示使用者自己的电脑和游戏，普通用户不需要修改。如果本地 Mod 改用了其他端口，可以在服务器配置中增加：
+Windows JSON 中一个 `\` 必须写成 `\\`。`127.0.0.1` 表示每个用户自己的电脑，通常不需要修改；若 Bridge 改了端口，再添加：
 
 ```json
 "env": {
@@ -322,30 +151,90 @@ Windows JSON 路径中的一个反斜杠必须写成两个 `\\`。例如实际�
 }
 ```
 
-MCP 状态工具每次调用都会读取最新状态，并返回对应的 `phase` 和 `state_id`。执行动作后必须再次读取，不能继续使用旧状态中的候选。
+手动执行 `uv run sts2-mcp` 后没有普通输出是正常的：stdio Server 正在等待 MCP Host 发送协议消息。
 
-### 常见问题
+## 使用项目自带 Agent
 
-- 无法连接本地桥接器：确认游戏已启动、Mod 已启用，并检查 `/health`。
-- 快照返回 `503`：游戏正处于界面切换或动画中，稍后重试。
-- API 返回 `401`：检查 `.env` 中的 Key。
-- API 返回 `429`：检查账户余额或等待限流恢复。
-- 请求超时：检查网络，或适当提高 `LLM_TIMEOUT_SECONDS`。
-- Agent 达到最大调用次数：缩小问题范围，或使用 `--simple` 回退模式。
-
-运行离线测试：
+Agent 默认使用 LangChain，通过独立 MCP Server 读取游戏。DeepSeek 或其他 OpenAI 兼容服务只需修改 URL、Key 和模型名。
 
 ```powershell
+cd agent
+Copy-Item .env.example .env
+uv sync
+uv run sts2-agent
+```
+
+`.env` 示例：
+
+```dotenv
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=你的_API_Key
+LLM_MODEL=deepseek-v4-flash
+LLM_TIMEOUT_SECONDS=60
+STS2_MCP_DIRECTORY=
+```
+
+完整仓库中 `STS2_MCP_DIRECTORY` 留空即可自动找到 `mcp/server`。单次提问：
+
+```powershell
+uv run sts2-agent ask "分析当前局面，推荐这一回合的出牌顺序"
+```
+
+固定流程回退模式同样通过 MCP：
+
+```powershell
+uv run sts2-agent --simple ask "分析当前局面"
+```
+
+在 Python 中调用：
+
+```python
+from sts2_agent import Sts2Agent
+
+agent = Sts2Agent.from_env()
+answer = agent.ask("现在应该怎么打？")
+print(answer.text, answer.phase, answer.state_id)
+```
+
+## 依赖与测试
+
+`pyproject.toml` 和 `uv.lock` 是各 Python 子项目的依赖来源。MCP 和 Agent 必须分别安装：
+
+两个目录使用彼此隔离的虚拟环境：独立 Server 使用 MCP SDK 2.x；LangChain 适配器所在的 Agent 环境固定使用其兼容的 MCP SDK 1.x。不要把两个目录的依赖手工合并到同一个虚拟环境。
+
+```powershell
+cd mcp\server
+uv sync
+uv run pytest
+
+cd ..\..\agent
+uv sync
 uv run pytest
 ```
 
-## 路线图
+不用 uv 时，可以在对应目录创建虚拟环境并运行：
 
-1. 完善只读协议文档与版本兼容测试。
-2. 完善 Python 客户端和紧凑的 Agent 视图。
-3. 完善 MCP Host 配置与兼容性验证。
-4. 扩展非战斗候选动作，同时复用统一的 `execute_action` 接口。
-5. 增加自动化测试、发布包和版本迁移说明。
+```powershell
+python -m pip install -r requirements.txt
+```
+
+`requirements.txt` 是从锁文件导出的运行时依赖，不要手工编辑。
+
+## 安全与隐私
+
+- Bridge 只绑定 `127.0.0.1`，不会监听局域网。
+- MCP Server 不持有模型 API Key，也不访问模型服务。
+- 写操作默认关闭，并受 `state_id`、动作候选白名单和单次消费保护。
+- 读取、校验与动作入队均在 Godot 主线程执行。
+- 不上传存档、遥测或游戏状态，不暴露未揭示内容。
+
+## 常见问题
+
+- MCP 无法启动：确认 `uv` 已安装并在 PATH 中，且 `--directory` 指向 `mcp/server`。
+- 无法连接 Bridge：确认游戏已启动、Mod 已启用，并检查 `/health`。
+- 快照返回 `503`：游戏正处于动画或界面切换，稍后重试。
+- 动作被拒绝：检查 `write_enabled`，并重新读取快照取得最新 `state_id/action_id`。
+- Agent 返回 `401/429`：检查 API Key、模型账户余额和限流。
 
 ## 免责声明
 

@@ -1,4 +1,4 @@
-from sts2_agent.compact import compact_snapshot
+from sts2_mcp.compact import compact_snapshot
 
 
 def test_combat_keeps_decision_data_and_drops_unknown_fields():

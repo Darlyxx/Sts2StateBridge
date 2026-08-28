@@ -3,8 +3,9 @@ from types import SimpleNamespace
 from sts2_agent import Settings, SimpleSts2Agent
 
 
-class FakeBridge:
-    def get_snapshot(self):
+class FakeMcpClient:
+    def snapshot(self, *, full_state=False):
+        assert full_state is False
         return {"state_id": "state-7", "phase": "combat", "in_combat": True, "combat": {"hand": [{"name": "痛击"}]}}
 
 
@@ -26,7 +27,7 @@ def make_agent():
     completions = FakeCompletions()
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     settings = Settings(api_key="not-a-real-key", model="deepseek-v4-flash")
-    return SimpleSts2Agent(settings, bridge=FakeBridge(), client=client), completions
+    return SimpleSts2Agent(settings, mcp_client=FakeMcpClient(), client=client), completions
 
 
 def test_ask_returns_state_metadata_and_records_history():

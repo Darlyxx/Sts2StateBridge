@@ -6,18 +6,17 @@ from typing import Iterator
 from openai import OpenAI
 
 from .agent_types import AgentAnswer, LlmError, friendly_llm_error
-from .bridge import BridgeClient
-from .compact import compact_snapshot
 from .config import Settings
+from .mcp_client import Sts2McpClient
 from .prompts import SYSTEM_PROMPT
 
 
 class SimpleSts2Agent:
     """Stable one-snapshot/one-model-call fallback client."""
 
-    def __init__(self, settings: Settings, *, bridge: BridgeClient | None = None, client: OpenAI | None = None) -> None:
+    def __init__(self, settings: Settings, *, mcp_client: Sts2McpClient | None = None, client: OpenAI | None = None) -> None:
         self.settings = settings
-        self.bridge = bridge or BridgeClient(settings.bridge_url)
+        self.mcp_client = mcp_client or Sts2McpClient(settings.mcp_directory, settings.bridge_url)
         self.client = client or OpenAI(api_key=settings.api_key, base_url=settings.base_url, timeout=settings.timeout_seconds, max_retries=2)
         self.history: list[dict[str, str]] = []
 
@@ -29,7 +28,7 @@ class SimpleSts2Agent:
         self.history.clear()
 
     def snapshot(self, *, full_state: bool = False) -> dict:
-        return compact_snapshot(self.bridge.get_snapshot(), full_state=full_state)
+        return self.mcp_client.snapshot(full_state=full_state)
 
     def _messages(self, question: str, state: dict) -> list[dict[str, str]]:
         payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))

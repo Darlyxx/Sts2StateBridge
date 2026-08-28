@@ -1,12 +1,10 @@
+import json
+
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.tools import tool
 
 from sts2_agent import Settings, Sts2Agent
-
-
-class FakeBridge:
-    def get_snapshot(self):
-        return {"state_id": "state-lc", "phase": "combat", "in_combat": True, "combat": {"hand": []}}
 
 
 class FakeGraph:
@@ -26,9 +24,7 @@ class FakeGraph:
 
 def make_agent():
     graph = FakeGraph()
-    agent = Sts2Agent(Settings(api_key="not-a-real-key"), bridge=FakeBridge(), graph=graph)
-    agent.tool_state.state_id = "state-lc"
-    agent.tool_state.phase = "combat"
+    agent = Sts2Agent(Settings(api_key="not-a-real-key"), graph=graph)
     return agent, graph
 
 
@@ -59,6 +55,18 @@ def test_langchain_clear_history():
     assert agent.history == []
 
 
+def test_langchain_reads_metadata_from_mcp_structured_artifact():
+    agent, _ = make_agent()
+    message = ToolMessage(
+        content="tool result",
+        artifact={"state_id": "artifact-state", "phase": "combat"},
+        tool_call_id="call-artifact",
+        name="get_combat_state",
+    )
+    agent._update_metadata([message])
+    assert (agent.state_id, agent.phase) == ("artifact-state", "combat")
+
+
 class ToolCallingFakeModel(GenericFakeChatModel):
     def bind_tools(self, tools, **kwargs):
         object.__setattr__(self, "bound_tools", tools)
@@ -66,14 +74,17 @@ class ToolCallingFakeModel(GenericFakeChatModel):
 
 
 def test_real_langchain_graph_executes_read_tool_then_answers():
+    @tool
+    def get_combat_state() -> str:
+        """Read combat state."""
+        return json.dumps({"state_id": "state-lc", "phase": "combat", "combat": {"hand": []}})
+
     model = ToolCallingFakeModel(messages=iter([
         AIMessage(content="", tool_calls=[{"name": "get_combat_state", "args": {}, "id": "call-1"}]),
         AIMessage(content="读取完成。[state_id: state-lc]"),
     ]))
-    agent = Sts2Agent(Settings(api_key="not-a-real-key"), bridge=FakeBridge(), model=model)
+    agent = Sts2Agent(Settings(api_key="not-a-real-key"), model=model, tools=[get_combat_state])
     answer = agent.ask("读取战斗状态")
     assert answer.text == "读取完成。[state_id: state-lc]"
     assert (answer.state_id, answer.phase) == ("state-lc", "combat")
-    assert {tool.name for tool in model.bound_tools} == {
-        "get_game_overview", "get_combat_state", "get_interaction", "get_full_snapshot"
-    }
+    assert {bound_tool.name for bound_tool in model.bound_tools} == {"get_combat_state"}

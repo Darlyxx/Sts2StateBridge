@@ -41,7 +41,7 @@ Sts2StateBridge.config.json
 logs/
 screenshots/
 
-# Python (reserved for the future client/MCP layer)
+# Python Agent and MCP Server
 __pycache__/
 *.py[cod]
 .venv/

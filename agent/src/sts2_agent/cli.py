@@ -6,8 +6,8 @@ import sys
 
 from .agent import Sts2Agent
 from .agent_types import LlmError
-from .bridge import BridgeError
 from .config import ConfigurationError
+from .mcp_client import McpClientError
 from .simple_agent import SimpleSts2Agent
 
 
@@ -78,7 +78,7 @@ def run_repl(agent, full_state: bool, simple: bool) -> int:
                 print("未知命令。输入 /help 查看可用命令。")
             else:
                 _print_stream(agent, question, full_state)
-        except (BridgeError, LlmError) as exc:
+        except (McpClientError, LlmError) as exc:
             print(f"错误：{exc}", file=sys.stderr)
     return 0
 
@@ -91,7 +91,7 @@ def main() -> int:
             _print_stream(agent, args.question, args.full_state or args.ask_full_state)
             return 0
         return run_repl(agent, args.full_state, args.simple)
-    except (ConfigurationError, BridgeError, LlmError) as exc:
+    except (ConfigurationError, McpClientError, LlmError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 

@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 from mcp import Client, StdioServerParameters
 
-from sts2_agent.bridge import BridgeUnavailableError
-from sts2_agent.mcp_server import create_mcp_server
+from sts2_mcp.bridge import BridgeUnavailableError
+from sts2_mcp.server import create_mcp_server
 
 
 @pytest.fixture

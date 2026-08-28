@@ -4,8 +4,8 @@ from urllib.error import HTTPError
 
 import pytest
 
-import sts2_agent.bridge as bridge_module
-from sts2_agent.bridge import BridgeActionError, BridgeClient
+import sts2_mcp.bridge as bridge_module
+from sts2_mcp.bridge import BridgeActionError, BridgeClient
 
 
 class FakeResponse:

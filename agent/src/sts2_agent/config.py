@@ -17,6 +17,7 @@ class Settings:
     base_url: str = "https://api.deepseek.com"
     model: str = "deepseek-v4-flash"
     bridge_url: str = "http://127.0.0.1:38281"
+    mcp_directory: Path = Path(__file__).resolve().parents[3] / "mcp" / "server"
     timeout_seconds: float = 60.0
 
     @classmethod
@@ -33,10 +34,15 @@ class Settings:
             raise ConfigurationError("LLM_TIMEOUT_SECONDS 必须是数字。") from exc
         if timeout <= 0:
             raise ConfigurationError("LLM_TIMEOUT_SECONDS 必须大于 0。")
+        default_mcp_directory = Path(__file__).resolve().parents[3] / "mcp" / "server"
+        configured_mcp_directory = os.getenv("STS2_MCP_DIRECTORY", "").strip()
         return cls(
             api_key=api_key,
             base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com").strip().rstrip("/"),
             model=os.getenv("LLM_MODEL", "deepseek-v4-flash").strip(),
             bridge_url=os.getenv("STS2_BRIDGE_URL", "http://127.0.0.1:38281").strip().rstrip("/"),
+            mcp_directory=Path(configured_mcp_directory or default_mcp_directory)
+            .expanduser()
+            .resolve(),
             timeout_seconds=timeout,
         )
