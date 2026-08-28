@@ -21,6 +21,8 @@ mcp/server                     独立 stdio MCP Server
 │  ├─ mod/Sts2StateBridge/     # 游戏内 C# Bridge Mod
 │  └─ server/                  # 独立 Python MCP Server 与测试
 ├─ agent/                      # 可选 LangChain/DeepSeek 客户端
+├─ scripts/build-release.ps1   # 生成不含游戏 DLL 的 MCP 发布包
+├─ RELEASING.md                # 维护者发布流程
 ├─ .gitignore
 ├─ LICENSE
 └─ README.md
@@ -105,7 +107,9 @@ uv sync
 
 ### 方式二：GitHub Release
 
-发布 Release 时可提供只含 `mcp/` 的压缩包。用户解压后安装其中的 Mod，并在 `mcp/server` 执行 `uv sync`。Release 适合普通用户；clone 适合需要查看源码、更新或参与开发的用户。
+GitHub Release 提供 `Sts2StateBridge-MCP-v版本.zip`。其中包含编译后的 Mod、独立 MCP Server、安装说明和许可证，不包含项目自带 Agent、游戏 DLL、虚拟环境或 API Key。用户解压后安装其中的 Mod，并在 `server` 目录执行 `uv sync`。Release 适合普通用户；clone 适合需要查看源码、更新或参与开发的用户。
+
+维护者生成发布包和创建 Release 的步骤见 [RELEASING.md](RELEASING.md)。
 
 无论使用哪种方式，MCP Host 配置中的 `--directory` 都必须替换为自己电脑上 `mcp/server` 的绝对路径：
 
