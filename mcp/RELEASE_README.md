@@ -13,6 +13,8 @@
 
 如需允许动作接口，将 `Sts2StateBridge.config.example.json` 复制到游戏 `Mods` 目录，改名为 `Sts2StateBridge.config.json`，并将 `write_enabled` 设为 `true`。只有充分理解风险后才应启用。
 
+当前写操作覆盖战斗、奖励领取、卡牌奖励、药水丢弃、宝箱、休息点和锻造。每次只能执行最新状态候选中的一个动作。
+
 ## 2. 安装 MCP Server
 
 需要 Python 3.11+ 和 uv：

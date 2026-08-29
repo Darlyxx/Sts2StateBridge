@@ -158,11 +158,44 @@ internal static class ReflectionRead
                     .FirstOrDefault(candidate => candidate.Name == name
                         && candidate.GetIndexParameters().Length == 0);
                 if (property is not null) return property.GetValue(value);
-                FieldInfo? field = value.GetType().GetField(name, Flags)
-                    ?? value.GetType().GetField("_" + char.ToLowerInvariant(name[0]) + name[1..], Flags);
+                FieldInfo? field = FindField(value.GetType(), name)
+                    ?? FindField(value.GetType(), "_" + char.ToLowerInvariant(name[0]) + name[1..]);
                 if (field is not null) return field.GetValue(value);
             }
             catch { }
+        }
+        return null;
+    }
+
+    public static object? Invoke(object value, string methodName, params object?[] arguments)
+    {
+        Type? type = value.GetType();
+        while (type is not null)
+        {
+            MethodInfo? method = type.GetMethods(Flags | BindingFlags.DeclaredOnly)
+                .FirstOrDefault(candidate => candidate.Name == methodName
+                    && candidate.GetParameters().Length == arguments.Length
+                    && candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                        .Zip(arguments, (parameterType, argument) =>
+                            argument is null || parameterType.IsInstanceOfType(argument))
+                        .All(matches => matches));
+            if (method is not null)
+            {
+                return method.Invoke(value, arguments);
+            }
+            type = type.BaseType;
+        }
+        throw new MissingMethodException(value.GetType().FullName, methodName);
+    }
+
+    private static FieldInfo? FindField(Type type, string name)
+    {
+        Type? current = type;
+        while (current is not null)
+        {
+            FieldInfo? field = current.GetField(name, Flags | BindingFlags.DeclaredOnly);
+            if (field is not null) return field;
+            current = current.BaseType;
         }
         return null;
     }

@@ -37,8 +37,8 @@ mcp/server                     独立 stdio MCP Server
 
 ## 当前版本与能力
 
-- Mod：`0.9.0`，目标游戏 `v0.111.0`，使用 `.NET 9`
-- MCP Server：`0.9.0`，Python 3.11+
+- Mod：`0.10.0`，目标游戏 `v0.111.0`，使用 `.NET 9`
+- MCP Server：`0.10.0`，Python 3.11+
 - Agent：`0.6.0`，Python 3.11+
 - Bridge：`http://127.0.0.1:38281`，只监听本机
 - 写操作：默认关闭，必须由本机配置明确开启
@@ -91,7 +91,9 @@ Invoke-RestMethod http://127.0.0.1:38281/snapshot
 
 写操作默认关闭。需要测试动作时，将 `mcp/mod/Sts2StateBridge/Sts2StateBridge.config.example.json` 复制到游戏 `Mods` 目录，改名为 `Sts2StateBridge.config.json`，将 `write_enabled` 改为 `true`，然后重启游戏。
 
-当前只接受快照候选中的 `play_card`、`use_potion` 和 `end_turn`。请求必须同时携带最新的 `state_id` 与 `action_id`；同一个状态只接受一次动作。真实本机配置不会提交到 Git。
+当前接受快照候选中的战斗动作，以及奖励领取、卡牌奖励、药水丢弃、宝箱、休息点和锻造动作。非战斗候选位于 `interaction.actions`。请求必须同时携带最新的 `state_id` 与 `action_id`；同一个状态只接受一次动作。真实本机配置不会提交到 Git。
+
+药水槽已满时不会直接生成领取药水动作，而会为已有药水生成 `discard_potion` 候选。丢弃后必须重新读取快照，再领取奖励药水。地图、事件、商店和远古遗物目前仍为只读。
 
 ## 只使用 MCP（已有自己的 Agent）
 

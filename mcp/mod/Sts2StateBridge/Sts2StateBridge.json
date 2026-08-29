@@ -3,7 +3,7 @@
   "name": "Sts2StateBridge",
   "author": "Darlyxx",
   "description": "Local bridge foundation for an AI agent that plays Slay the Spire 2.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],

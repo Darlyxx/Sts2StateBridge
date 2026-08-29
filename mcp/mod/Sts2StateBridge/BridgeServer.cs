@@ -87,7 +87,7 @@ internal static class BridgeServer
             {
                 ok = true,
                 bridge = "Sts2StateBridge",
-                bridge_version = "0.9.0",
+                bridge_version = "0.10.0",
                 game_version_target = "v0.111.0",
                 write_enabled = BridgeConfiguration.WriteEnabled
             });
@@ -173,7 +173,7 @@ internal static class BridgeServer
             }
 
             Task<ActionResponsePayload> actionTask = GameThread.InvokeAsync(
-                () => CombatActionService.Execute(actionRequest));
+                () => GameActionService.Execute(actionRequest));
             Task completedTask = await Task.WhenAny(
                     actionTask,
                     Task.Delay(TimeSpan.FromSeconds(2)))

@@ -1,6 +1,8 @@
 using System.Text.Json.Serialization;
 using Godot;
+using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Runs;
 
@@ -16,22 +18,26 @@ internal static class InteractionSnapshotService
             object? scene = FindRelevantNode(currentScreen);
             string typeName = scene?.GetType().Name ?? screenType;
 
-            if (typeName == "NMapScreen") return BuildMap(scene!, screenType);
-            if (typeName == "NRewardsScreen") return BuildRewards(scene!, screenType);
-            if (typeName == "NCardRewardSelectionScreen") return BuildCardReward(scene!, screenType);
-            if (typeName == "NEventRoom") return BuildEvent(scene!, screenType);
-            if (typeName == "NMerchantInventory") return BuildShop(scene!, screenType, runState);
-            if (typeName == "NMerchantRoom") return BuildMerchantRoom(scene!, screenType);
-            if (typeName == "NRestSiteRoom") return BuildRestSite(scene!, screenType);
-            if (typeName == "NDeckUpgradeSelectScreen") return BuildDeckUpgrade(scene!, screenType);
-            if (typeName is "NTreasureRoom" or "NTreasureRoomRelicCollection") return BuildTreasure(scene!, screenType);
-
-            return new InteractionSnapshotPayload
+            InteractionSnapshotPayload result = typeName switch
             {
-                Type = LooksTransitional(screenType) ? "transition" : "none",
-                Ready = false,
-                ScreenType = screenType
+                "NMapScreen" => BuildMap(scene!, screenType),
+                "NRewardsScreen" => BuildRewards(scene!, screenType),
+                "NCardRewardSelectionScreen" => BuildCardReward(scene!, screenType),
+                "NEventRoom" => BuildEvent(scene!, screenType),
+                "NMerchantInventory" => BuildShop(scene!, screenType, runState),
+                "NMerchantRoom" => BuildMerchantRoom(scene!, screenType),
+                "NRestSiteRoom" => BuildRestSite(scene!, screenType),
+                "NDeckUpgradeSelectScreen" => BuildDeckUpgrade(scene!, screenType),
+                "NTreasureRoom" or "NTreasureRoomRelicCollection" => BuildTreasure(scene!, screenType),
+                _ => new InteractionSnapshotPayload
+                {
+                    Type = LooksTransitional(screenType) ? "transition" : "none",
+                    Ready = false,
+                    ScreenType = screenType
+                }
             };
+            result.Actions = BuildActions(result, runState);
+            return result;
         }
         catch
         {
@@ -109,15 +115,19 @@ internal static class InteractionSnapshotService
             .Where(button => button is not CanvasItem canvas || canvas.IsVisibleInTree())
             .ToArray();
         List<InteractionOptionSnapshotPayload> options = buttons
-            .Select((button, index) => BuildRewardOption(ReflectionRead.Value(button, "Reward") ?? button, index))
+            .Select((button, index) => BuildRewardOption(
+                ReflectionRead.Value(button, "Reward") ?? button,
+                index,
+                ControlEnabled(button)))
             .ToList();
         object? proceed = ReflectionRead.Value(screen, "_proceedButton", "ProceedButton");
-        if (options.Count == 0 && proceed is CanvasItem proceedCanvas && proceedCanvas.IsVisibleInTree())
+        if (ControlEnabled(proceed))
         {
             options.Add(new InteractionOptionSnapshotPayload
             {
-                OptionId = "rewards:proceed", Index = 0, Kind = "proceed",
-                Label = "proceed", Enabled = true
+                OptionId = "rewards:proceed", Index = options.Count, Kind = "proceed",
+                Label = (ReflectionRead.Bool(proceed, "IsSkip") ?? false) ? "skip" : "proceed",
+                Enabled = true
             });
         }
         return new InteractionSnapshotPayload
@@ -129,20 +139,27 @@ internal static class InteractionSnapshotService
         };
     }
 
-    private static InteractionOptionSnapshotPayload BuildRewardOption(object reward, int index)
+    private static InteractionOptionSnapshotPayload BuildRewardOption(object reward, int index, bool controlEnabled)
     {
         string kind = ReflectionRead.Text(reward, "RewardType")?.ToLowerInvariant() ?? reward.GetType().Name;
         object? model = ReflectionRead.Value(reward, "Relic", "Potion", "Card");
         return new InteractionOptionSnapshotPayload
         {
-            OptionId = $"reward:{ReflectionRead.Int(reward, "RewardsSetIndex") ?? index}:{kind}",
+            OptionId = RewardOptionId(reward, index, kind),
             Index = index,
             Kind = kind,
             Label = ReflectionRead.Localized(reward, "Description"),
-            Enabled = !(ReflectionRead.Bool(reward, "SuccessfullySelected") ?? false),
+            Enabled = controlEnabled && !(ReflectionRead.Bool(reward, "SuccessfullySelected") ?? false),
             Amount = ReflectionRead.Int(reward, "Amount"),
             Item = BuildItem(model)
         };
+    }
+
+    internal static string RewardOptionId(object reward, int index, string? kind = null)
+    {
+        kind ??= ReflectionRead.Text(reward, "RewardType")?.ToLowerInvariant()
+            ?? reward.GetType().Name.ToLowerInvariant();
+        return $"reward:{ReflectionRead.Int(reward, "RewardsSetIndex") ?? index}:{kind}";
     }
 
     private static InteractionSnapshotPayload BuildCardReward(object screen, string screenType)
@@ -319,7 +336,8 @@ internal static class InteractionSnapshotService
                     Options = [new InteractionOptionSnapshotPayload
                     {
                         OptionId = "treasure:open_chest", Index = 0, Kind = "open_chest",
-                        Label = "open_chest", Enabled = true
+                        Label = "open_chest",
+                        Enabled = ControlEnabled(ReflectionRead.Value(collection, "_chestButton"))
                     }]
                 };
             }
@@ -337,7 +355,7 @@ internal static class InteractionSnapshotService
         object? relic = ExtractModel(relicNode, "Model", "RelicModel", "Relic");
         bool empty = ReflectionRead.Bool(collection, "_isEmptyChest") ?? false;
         bool relicVisible = relicNode is not CanvasItem relicCanvas || relicCanvas.IsVisibleInTree();
-        bool proceedVisible = proceedButton is CanvasItem proceedCanvas && proceedCanvas.IsVisibleInTree();
+        bool proceedVisible = ControlEnabled(proceedButton);
         InteractionOptionSnapshotPayload[] options = relic is null || !relicVisible
             ? proceedVisible
                 ? [new InteractionOptionSnapshotPayload
@@ -355,7 +373,7 @@ internal static class InteractionSnapshotService
         return new InteractionSnapshotPayload { Type = "treasure", Ready = empty || options.Length > 0, ScreenType = screenType, Options = options };
     }
 
-    private static object? FindRelevantNode(object? root)
+    internal static object? FindRelevantNode(object? root)
     {
         if (root is null) return null;
         string[] relevant = ["NMapScreen", "NRewardsScreen", "NCardRewardSelectionScreen", "NEventRoom", "NMerchantInventory", "NMerchantRoom", "NRestSiteRoom", "NDeckUpgradeSelectScreen", "NTreasureRoom", "NTreasureRoomRelicCollection"];
@@ -379,7 +397,7 @@ internal static class InteractionSnapshotService
         return true;
     }
 
-    private static object? ExtractModel(object? value, params string[] names)
+    internal static object? ExtractModel(object? value, params string[] names)
     {
         if (value is null) return null;
         if (ReflectionRead.Entry(value, "Id") is not null) return value;
@@ -422,6 +440,106 @@ internal static class InteractionSnapshotService
     }
 
     private static bool LooksTransitional(string screenType) => screenType is "NRun" or "NCombatRoom" or "unknown";
+
+    internal static bool ControlEnabled(object? control)
+    {
+        if (control is null) return false;
+        if (control is CanvasItem canvas && !canvas.IsVisibleInTree()) return false;
+        return ReflectionRead.Bool(control, "IsEnabled") ?? true;
+    }
+
+    private static InteractionActionSnapshotPayload[] BuildActions(
+        InteractionSnapshotPayload interaction,
+        RunState runState)
+    {
+        if (!interaction.Ready)
+        {
+            return [];
+        }
+
+        List<InteractionActionSnapshotPayload> actions = new();
+        InteractionOptionSnapshotPayload[] enabled = interaction.Options
+            .Where(option => option.Enabled)
+            .ToArray();
+
+        if (interaction.Type == "combat_reward")
+        {
+            Player? player = LocalContext.GetMe((IPlayerCollection)runState);
+            foreach (InteractionOptionSnapshotPayload option in enabled)
+            {
+                if (option.Kind == "proceed")
+                {
+                    actions.Add(ForOption("proceed", option));
+                    continue;
+                }
+
+                if (option.Kind == "potion" && player is not null && !player.HasOpenPotionSlots)
+                {
+                    foreach ((var potion, int slot) in player.PotionSlots.Select((potion, slot) => (potion, slot)))
+                    {
+                        if (potion is null) continue;
+                        string instanceId = RunInventoryService.InstanceId(potion, slot.ToString());
+                        actions.Add(new InteractionActionSnapshotPayload
+                        {
+                            ActionId = $"interaction:discard_potion:{instanceId}",
+                            Type = "discard_potion",
+                            OptionId = option.OptionId,
+                            Label = $"discard {ReflectionRead.Localized(potion, "Title") ?? potion.Id.Entry}",
+                            PotionSlot = slot,
+                            PotionInstanceId = instanceId
+                        });
+                    }
+                    continue;
+                }
+
+                actions.Add(ForOption("claim_reward", option));
+            }
+        }
+        else if (interaction.Type == "card_reward")
+        {
+            actions.AddRange(enabled.Select(option => ForOption(
+                option.Kind == "card" ? "select_card" : "select_alternative",
+                option)));
+        }
+        else if (interaction.Type == "rest_site")
+        {
+            actions.AddRange(enabled.Select(option => ForOption(
+                option.Kind switch
+                {
+                    "upgrade_card" => "upgrade_card",
+                    "proceed" => "proceed",
+                    _ => "select_rest_option"
+                },
+                option)));
+        }
+        else if (interaction.Type == "treasure")
+        {
+            actions.AddRange(enabled.Select(option => ForOption(
+                option.Kind switch
+                {
+                    "open_chest" => "open_chest",
+                    "relic" => "claim_relic",
+                    _ => "proceed"
+                },
+                option)));
+        }
+
+        return actions.ToArray();
+    }
+
+    private static InteractionActionSnapshotPayload ForOption(
+        string type,
+        InteractionOptionSnapshotPayload option)
+    {
+        return new InteractionActionSnapshotPayload
+        {
+            ActionId = $"interaction:{type}:{option.OptionId}",
+            Type = type,
+            OptionId = option.OptionId,
+            Label = option.Label,
+            TargetId = option.TargetId ?? option.Item?.ItemId
+        };
+    }
 }
 
 internal sealed class InteractionSnapshotPayload
@@ -432,7 +550,19 @@ internal sealed class InteractionSnapshotPayload
     [JsonPropertyName("title")] public string? Title { get; init; }
     [JsonPropertyName("description")] public string? Description { get; init; }
     [JsonPropertyName("options")] public InteractionOptionSnapshotPayload[] Options { get; init; } = [];
+    [JsonPropertyName("actions")] public InteractionActionSnapshotPayload[] Actions { get; set; } = [];
     [JsonPropertyName("map")] public MapSnapshotPayload? Map { get; init; }
+}
+
+internal sealed class InteractionActionSnapshotPayload
+{
+    [JsonPropertyName("action_id")] public required string ActionId { get; init; }
+    [JsonPropertyName("type")] public required string Type { get; init; }
+    [JsonPropertyName("option_id")] public string? OptionId { get; init; }
+    [JsonPropertyName("label")] public string? Label { get; init; }
+    [JsonPropertyName("target_id")] public string? TargetId { get; init; }
+    [JsonPropertyName("potion_slot")] public int? PotionSlot { get; init; }
+    [JsonPropertyName("potion_instance_id")] public string? PotionInstanceId { get; init; }
 }
 
 internal sealed class InteractionOptionSnapshotPayload

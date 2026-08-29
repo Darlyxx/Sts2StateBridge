@@ -26,6 +26,25 @@ def test_map_only_keeps_current_and_reachable_nodes():
     assert [node["node_id"] for node in nodes] == ["map:1:1", "map:2:1"]
 
 
+def test_interaction_keeps_only_current_action_candidates():
+    snapshot = {
+        "state_id": "reward-1", "phase": "run", "in_run": True, "in_combat": False,
+        "interaction": {
+            "type": "combat_reward", "ready": True,
+            "options": [{"option_id": "reward:0:gold", "enabled": True}],
+            "actions": [{
+                "action_id": "interaction:claim_reward:reward:0:gold",
+                "type": "claim_reward",
+                "option_id": "reward:0:gold",
+            }],
+            "internal": "must not pass",
+        },
+    }
+    interaction = compact_snapshot(snapshot)["interaction"]
+    assert interaction["actions"][0]["type"] == "claim_reward"
+    assert "internal" not in interaction
+
+
 def test_full_state_is_unchanged():
     snapshot = {"state_id": "x", "custom": {"value": None}}
     assert compact_snapshot(snapshot, full_state=True) is snapshot

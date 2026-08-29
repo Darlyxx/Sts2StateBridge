@@ -7,11 +7,12 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
 using MegaCrit.Sts2.Core.Runs;
 
 namespace Sts2StateBridge;
 
-internal static class CombatActionService
+internal static class GameActionService
 {
     private static string? _lastAcceptedStateId;
 
@@ -34,10 +35,11 @@ internal static class CombatActionService
                 "an action was already accepted for this state_id");
         }
 
-        CombatSnapshotPayload? combat = snapshot.Combat;
-        CombatActionSnapshotPayload? candidate = combat?.Actions.FirstOrDefault(action =>
+        CombatActionSnapshotPayload? combatCandidate = snapshot.Combat?.Actions.FirstOrDefault(action =>
             string.Equals(action.ActionId, request.ActionId, StringComparison.Ordinal));
-        if (candidate is null)
+        InteractionActionSnapshotPayload? interactionCandidate = snapshot.Interaction?.Actions.FirstOrDefault(action =>
+            string.Equals(action.ActionId, request.ActionId, StringComparison.Ordinal));
+        if (combatCandidate is null && interactionCandidate is null)
         {
             throw new ActionRequestException(
                 HttpStatusCode.UnprocessableEntity,
@@ -45,6 +47,30 @@ internal static class CombatActionService
                 "action_id is not an available action in the current snapshot");
         }
 
+        string actionType;
+        if (combatCandidate is not null)
+        {
+            ExecuteCombat(combatCandidate);
+            actionType = combatCandidate.Type;
+        }
+        else
+        {
+            ExecuteInteraction(interactionCandidate!);
+            actionType = interactionCandidate!.Type;
+        }
+
+        _lastAcceptedStateId = request.StateId;
+        return new ActionResponsePayload
+        {
+            Accepted = true,
+            StateId = request.StateId!,
+            ActionId = request.ActionId!,
+            ActionType = actionType
+        };
+    }
+
+    private static void ExecuteCombat(CombatActionSnapshotPayload candidate)
+    {
         CombatState? combatState = CombatManager.Instance.DebugOnlyGetState();
         Player? player = combatState is null ? null : LocalContext.GetMe((ICombatState)combatState);
         if (combatState is null || player?.PlayerCombatState is null || !IsReady(player))
@@ -67,21 +93,204 @@ internal static class CombatActionService
                 PlayerCmd.EndTurn(player, false);
                 break;
             default:
-                throw new ActionRequestException(
-                    HttpStatusCode.UnprocessableEntity,
-                    "unsupported_action_type",
-                    $"action type '{candidate.Type}' is not supported");
+                throw Unsupported(candidate.Type);
+        }
+    }
+
+    private static void ExecuteInteraction(InteractionActionSnapshotPayload candidate)
+    {
+        RunState? runState = RunManager.Instance.DebugOnlyGetState();
+        object? scene = InteractionSnapshotService.FindRelevantNode(
+            ActiveScreenContext.Instance.GetCurrentScreen());
+        if (runState is null || scene is null)
+        {
+            throw new ActionRequestException(
+                HttpStatusCode.Conflict,
+                "interaction_not_ready",
+                "interaction is no longer available");
         }
 
-        _lastAcceptedStateId = request.StateId;
-        return new ActionResponsePayload
+        switch (candidate.Type)
         {
-            Accepted = true,
-            StateId = request.StateId!,
-            ActionId = request.ActionId!,
-            ActionType = candidate.Type
-        };
+            case "claim_reward":
+                ClaimReward(scene, candidate);
+                break;
+            case "select_card":
+                SelectCardReward(scene, candidate);
+                break;
+            case "select_alternative":
+                SelectCardAlternative(scene, candidate);
+                break;
+            case "discard_potion":
+                DiscardPotion(runState, candidate);
+                break;
+            case "select_rest_option":
+                SelectRestOption(scene, candidate);
+                break;
+            case "upgrade_card":
+                UpgradeCard(scene, candidate);
+                break;
+            case "open_chest":
+                OpenChest(scene);
+                break;
+            case "claim_relic":
+                ClaimTreasureRelic(scene);
+                break;
+            case "proceed":
+                Proceed(scene);
+                break;
+            default:
+                throw Unsupported(candidate.Type);
+        }
     }
+
+    private static void ClaimReward(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        object[] buttons = ReflectionRead.Items(ReflectionRead.Value(scene, "_rewardButtons", "RewardButtons")).ToArray();
+        object? button = buttons.Select((value, index) => new
+            {
+                Button = value,
+                Reward = ReflectionRead.Value(value, "Reward") ?? value,
+                Index = index
+            })
+            .FirstOrDefault(value => string.Equals(
+                InteractionSnapshotService.RewardOptionId(
+                    value.Reward,
+                    value.Index,
+                    ReflectionRead.Text(value.Reward, "RewardType")?.ToLowerInvariant()
+                        ?? value.Reward.GetType().Name),
+                candidate.OptionId,
+                StringComparison.Ordinal))?.Button;
+        if (button is null || !InteractionSnapshotService.ControlEnabled(button))
+            throw InteractionChanged("reward is no longer available");
+        ReflectionRead.Invoke(button, "OnRelease");
+    }
+
+    private static void SelectCardReward(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        object? card = ReflectionRead.Items(ReflectionRead.Value(scene, "_options", "Options"))
+            .Select((option, index) => new
+            {
+                Card = InteractionSnapshotService.ExtractModel(option, "CardModel", "Card", "Model") ?? option,
+                Index = index
+            })
+            .FirstOrDefault(value => string.Equals(
+                $"card_reward:{RunInventoryService.InstanceId(value.Card, value.Index.ToString())}",
+                candidate.OptionId,
+                StringComparison.Ordinal))?.Card;
+        if (card is null) throw InteractionChanged("card reward is no longer available");
+        object? holder = ReflectionRead.Invoke(scene, "GetCardHolder", card);
+        if (holder is null) throw InteractionChanged("card holder is no longer available");
+        ReflectionRead.Invoke(scene, "SelectCard", holder);
+    }
+
+    private static void SelectCardAlternative(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        object[] options = ReflectionRead.Items(ReflectionRead.Value(scene, "_extraOptions", "ExtraOptions")).ToArray();
+        int index = Array.FindIndex(options, option => string.Equals(
+            $"card_reward:extra:{ReflectionRead.Text(option, "OptionId")}",
+            candidate.OptionId,
+            StringComparison.Ordinal));
+        if (index < 0) throw InteractionChanged("card reward alternative is no longer available");
+        ReflectionRead.Invoke(scene, "OnAlternateRewardSelected", index);
+    }
+
+    private static void DiscardPotion(RunState runState, InteractionActionSnapshotPayload candidate)
+    {
+        Player? player = LocalContext.GetMe((IPlayerCollection)runState);
+        PotionModel? potion = candidate.PotionSlot is null
+            ? null
+            : player?.PotionSlots.ElementAtOrDefault(candidate.PotionSlot.Value);
+        if (player is null || !player.CanUseOrRemovePotions || potion is null || !string.Equals(
+                RunInventoryService.InstanceId(potion, string.Empty),
+                candidate.PotionInstanceId,
+                StringComparison.Ordinal))
+        {
+            throw InteractionChanged("potion is no longer discardable");
+        }
+        _ = PotionCmd.Discard(potion);
+    }
+
+    private static void SelectRestOption(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        object? option = ReflectionRead.Items(ReflectionRead.Value(scene, "Options"))
+            .Select(entry => ReflectionRead.Value(entry, "Option") ?? entry)
+            .FirstOrDefault(value => string.Equals(
+                $"rest:{ReflectionRead.Text(value, "OptionId")}",
+                candidate.OptionId,
+                StringComparison.Ordinal));
+        if (option is null || !(ReflectionRead.Bool(option, "IsEnabled") ?? false))
+            throw InteractionChanged("rest site option is no longer enabled");
+        object? button = ReflectionRead.Invoke(scene, "GetButtonForOption", option);
+        if (button is null || !InteractionSnapshotService.ControlEnabled(button))
+            throw InteractionChanged("rest site button is no longer available");
+        _ = ReflectionRead.Invoke(button, "SelectOption", option);
+    }
+
+    private static void UpgradeCard(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        CardModel? card = ReflectionRead.Items(ReflectionRead.Value(scene, "_cards", "Cards"))
+            .OfType<CardModel>()
+            .FirstOrDefault(value => string.Equals(
+                $"rest:smith:{RunInventoryService.InstanceId(value, string.Empty)}",
+                candidate.OptionId,
+                StringComparison.Ordinal));
+        if (card is null || card.IsUpgraded) throw InteractionChanged("card is no longer upgradeable");
+        ReflectionRead.Invoke(scene, "OnCardClicked", card);
+        object? confirm = ReflectionRead.Value(scene, "_singlePreviewConfirmButton");
+        if (confirm is null || !InteractionSnapshotService.ControlEnabled(confirm))
+            throw InteractionChanged("upgrade confirmation is unavailable");
+        ReflectionRead.Invoke(scene, "ConfirmSelection", confirm);
+    }
+
+    private static void OpenChest(object scene)
+    {
+        if (scene.GetType().Name != "NTreasureRoom") throw InteractionChanged("treasure room is unavailable");
+        object? button = ReflectionRead.Value(scene, "_chestButton");
+        if (button is null || !InteractionSnapshotService.ControlEnabled(button))
+            throw InteractionChanged("chest button is unavailable");
+        ReflectionRead.Invoke(scene, "OnChestButtonReleased", button);
+    }
+
+    private static void ClaimTreasureRelic(object scene)
+    {
+        object collection = scene.GetType().Name == "NTreasureRoom"
+            ? ReflectionRead.Value(scene, "_relicCollection") ?? throw InteractionChanged("relic collection is unavailable")
+            : scene;
+        object? holder = ReflectionRead.Value(collection, "SingleplayerRelicHolder");
+        if (holder is null || !InteractionSnapshotService.ControlEnabled(holder))
+            throw InteractionChanged("relic is no longer available");
+        ReflectionRead.Invoke(collection, "PickRelic", holder);
+    }
+
+    private static void Proceed(object scene)
+    {
+        object? button = ReflectionRead.Value(scene, "_proceedButton", "ProceedButton");
+        if (button is null || !InteractionSnapshotService.ControlEnabled(button))
+            throw InteractionChanged("proceed button is unavailable");
+        switch (scene.GetType().Name)
+        {
+            case "NRewardsScreen":
+                ReflectionRead.Invoke(scene, "OnProceedButtonPressed", button);
+                break;
+            case "NRestSiteRoom":
+            case "NTreasureRoom":
+                ReflectionRead.Invoke(scene, "OnProceedButtonReleased", button);
+                break;
+            default:
+                throw InteractionChanged("proceed action is unavailable on this screen");
+        }
+    }
+
+    private static ActionRequestException InteractionChanged(string message) => new(
+        HttpStatusCode.Conflict,
+        "interaction_changed",
+        message);
+
+    private static ActionRequestException Unsupported(string type) => new(
+        HttpStatusCode.UnprocessableEntity,
+        "unsupported_action_type",
+        $"action type '{type}' is not supported");
 
     private static bool IsReady(Player player)
     {
