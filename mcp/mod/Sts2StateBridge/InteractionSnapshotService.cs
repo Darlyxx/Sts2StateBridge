@@ -26,6 +26,8 @@ internal static class InteractionSnapshotService
                 "NEventRoom" => BuildEvent(scene!, screenType),
                 "NMerchantInventory" => BuildShop(scene!, screenType, runState),
                 "NMerchantRoom" => BuildMerchantRoom(scene!, screenType),
+                "NDeckCardSelectScreen" => BuildDeckCardSelection(scene!, screenType),
+                "NSimpleCardsViewScreen" => BuildSimpleCardsView(scene!, screenType),
                 "NRestSiteRoom" => BuildRestSite(scene!, screenType),
                 "NDeckUpgradeSelectScreen" => BuildDeckUpgrade(scene!, screenType),
                 "NTreasureRoom" or "NTreasureRoomRelicCollection" => BuildTreasure(scene!, screenType),
@@ -257,7 +259,15 @@ internal static class InteractionSnapshotService
             }).ToArray();
         return new InteractionSnapshotPayload
         {
-            Type = "shop", Ready = (ReflectionRead.Bool(node, "IsOpen") ?? false), ScreenType = screenType, Options = options
+            Type = "shop",
+            Ready = (ReflectionRead.Bool(node, "IsOpen") ?? false)
+                && !(ReflectionRead.Bool(node, "_isInputBlocked", "IsInputBlocked") ?? false),
+            ScreenType = screenType,
+            Options = options.Concat([new InteractionOptionSnapshotPayload
+            {
+                OptionId = "shop:close", Index = options.Length, Kind = "close_shop",
+                Label = "close_shop", Enabled = ControlEnabled(ReflectionRead.Value(node, "_backButton"))
+            }]).ToArray()
         };
     }
 
@@ -266,11 +276,81 @@ internal static class InteractionSnapshotService
         return new InteractionSnapshotPayload
         {
             Type = "shop", Ready = true, ScreenType = screenType,
-            Options = [new InteractionOptionSnapshotPayload
-            {
-                OptionId = "shop:open", Index = 0, Kind = "open_shop",
-                Label = "open_shop", Enabled = true
-            }]
+            Options =
+            [
+                new InteractionOptionSnapshotPayload
+                {
+                    OptionId = "shop:open", Index = 0, Kind = "open_shop",
+                    Label = "open_shop", Enabled = ControlEnabled(ReflectionRead.Value(room, "MerchantButton"))
+                },
+                new InteractionOptionSnapshotPayload
+                {
+                    OptionId = "shop:proceed", Index = 1, Kind = "proceed",
+                    Label = "proceed", Enabled = ControlEnabled(ReflectionRead.Value(room, "ProceedButton"))
+                }
+            ]
+        };
+    }
+
+    private static InteractionSnapshotPayload BuildDeckCardSelection(object screen, string screenType)
+    {
+        object? prefs = ReflectionRead.Value(screen, "_prefs", "Prefs");
+        object? prompt = ReflectionRead.Value(prefs, "Prompt");
+        string context = string.Join("|", new[]
+        {
+            ReflectionRead.Text(prompt, "LocTable"),
+            ReflectionRead.Text(prompt, "LocEntryKey"),
+            ReflectionRead.InvokeText(prompt, "GetRawText", "GetFormattedText"),
+            prompt?.ToString()
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        bool isRemoval = context.Contains("remove", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("merchant", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("移除", StringComparison.OrdinalIgnoreCase)
+            || context.Contains("删除", StringComparison.OrdinalIgnoreCase);
+        if (!isRemoval)
+            return new InteractionSnapshotPayload { Type = "unknown", Ready = false, ScreenType = screenType };
+
+        CardModel[] cards = ReflectionRead.Items(ReflectionRead.Value(screen, "_cards", "Cards"))
+            .OfType<CardModel>().ToArray();
+        if (cards.Length == 0)
+        {
+            cards = ReflectionRead.Items(ReflectionRead.Value(prefs, "Cards", "ValidCards"))
+                .OfType<CardModel>().ToArray();
+        }
+        InteractionOptionSnapshotPayload[] options = cards.Select((card, index) => new InteractionOptionSnapshotPayload
+        {
+            OptionId = $"shop:remove:{RunInventoryService.InstanceId(card, index.ToString())}",
+            Index = index,
+            Kind = "remove_card",
+            Label = card.Title,
+            Description = SafeCardText(card),
+            Enabled = true,
+            Item = BuildItem(card)
+        }).ToArray();
+        return new InteractionSnapshotPayload
+        {
+            Type = "shop", Ready = options.Length > 0, ScreenType = screenType,
+            Title = "shop_card_removal", Options = options
+        };
+    }
+
+    private static InteractionSnapshotPayload BuildSimpleCardsView(object screen, string screenType)
+    {
+        object? confirm = ReflectionRead.Value(screen, "_confirmButton");
+        bool enabled = ControlEnabled(confirm);
+        return new InteractionSnapshotPayload
+        {
+            Type = "transition",
+            Ready = enabled,
+            ScreenType = screenType,
+            Title = "card_results",
+            Options = enabled
+                ? [new InteractionOptionSnapshotPayload
+                {
+                    OptionId = "simple_cards_view:proceed", Index = 0, Kind = "proceed",
+                    Label = "proceed", Enabled = true
+                }]
+                : []
         };
     }
 
@@ -376,7 +456,7 @@ internal static class InteractionSnapshotService
     internal static object? FindRelevantNode(object? root)
     {
         if (root is null) return null;
-        string[] relevant = ["NMapScreen", "NRewardsScreen", "NCardRewardSelectionScreen", "NEventRoom", "NMerchantInventory", "NMerchantRoom", "NRestSiteRoom", "NDeckUpgradeSelectScreen", "NTreasureRoom", "NTreasureRoomRelicCollection"];
+        string[] relevant = ["NMapScreen", "NRewardsScreen", "NCardRewardSelectionScreen", "NEventRoom", "NMerchantInventory", "NMerchantRoom", "NDeckCardSelectScreen", "NSimpleCardsViewScreen", "NRestSiteRoom", "NDeckUpgradeSelectScreen", "NTreasureRoom", "NTreasureRoomRelicCollection"];
         if (relevant.Contains(root.GetType().Name) && IsActiveCandidate(root)) return root;
         if (root is not Node node) return null;
         foreach (Node child in node.GetChildren())
@@ -522,6 +602,34 @@ internal static class InteractionSnapshotService
                     _ => "proceed"
                 },
                 option)));
+        }
+        else if (interaction.Type == "map")
+        {
+            actions.AddRange(enabled.Where(option => option.Kind == "map_node")
+                .Select(option => ForOption("travel_map", option)));
+        }
+        else if (interaction.Type == "event")
+        {
+            actions.AddRange(enabled.Select(option => ForOption("select_event_option", option)));
+        }
+        else if (interaction.Type == "shop")
+        {
+            actions.AddRange(enabled.Where(option => option.Kind is "open_shop" or "close_shop" or "proceed" or "remove_card"
+                    || option.Affordable == true)
+                .Select(option => ForOption(option.Kind switch
+                {
+                    "open_shop" => "open_shop",
+                    "close_shop" => "close_shop",
+                    "proceed" => "proceed",
+                    "cardremoval" => "open_card_removal",
+                    "remove_card" => "remove_card",
+                    _ => "buy_shop_item"
+                }, option)));
+        }
+        else if (interaction.Type == "transition"
+            && interaction.ScreenType == "NSimpleCardsViewScreen")
+        {
+            actions.AddRange(enabled.Select(option => ForOption("proceed", option)));
         }
 
         return actions.ToArray();

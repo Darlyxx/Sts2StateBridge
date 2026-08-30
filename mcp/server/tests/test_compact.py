@@ -45,6 +45,22 @@ def test_interaction_keeps_only_current_action_candidates():
     assert "internal" not in interaction
 
 
+def test_map_event_and_shop_actions_survive_compaction():
+    for interaction_type, action_type in [
+        ("map", "travel_map"),
+        ("event", "select_event_option"),
+        ("shop", "buy_shop_item"),
+    ]:
+        snapshot = {
+            "state_id": f"{interaction_type}-1", "phase": "run", "in_run": True,
+            "interaction": {
+                "type": interaction_type, "ready": True,
+                "actions": [{"action_id": f"interaction:{action_type}:x", "type": action_type}],
+            },
+        }
+        assert compact_snapshot(snapshot)["interaction"]["actions"][0]["type"] == action_type
+
+
 def test_full_state_is_unchanged():
     snapshot = {"state_id": "x", "custom": {"value": None}}
     assert compact_snapshot(snapshot, full_state=True) is snapshot

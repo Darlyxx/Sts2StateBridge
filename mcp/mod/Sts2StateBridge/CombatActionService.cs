@@ -139,6 +139,27 @@ internal static class GameActionService
             case "proceed":
                 Proceed(scene);
                 break;
+            case "travel_map":
+                TravelMap(scene, candidate);
+                break;
+            case "select_event_option":
+                SelectEventOption(scene, candidate);
+                break;
+            case "open_shop":
+                OpenShop(scene);
+                break;
+            case "close_shop":
+                CloseShop(scene);
+                break;
+            case "buy_shop_item":
+                BuyShopItem(scene, candidate);
+                break;
+            case "open_card_removal":
+                OpenCardRemoval(scene, candidate);
+                break;
+            case "remove_card":
+                RemoveCard(scene, candidate);
+                break;
             default:
                 throw Unsupported(candidate.Type);
         }
@@ -265,7 +286,7 @@ internal static class GameActionService
 
     private static void Proceed(object scene)
     {
-        object? button = ReflectionRead.Value(scene, "_proceedButton", "ProceedButton");
+        object? button = ReflectionRead.Value(scene, "_proceedButton", "ProceedButton", "_confirmButton");
         if (button is null || !InteractionSnapshotService.ControlEnabled(button))
             throw InteractionChanged("proceed button is unavailable");
         switch (scene.GetType().Name)
@@ -277,9 +298,137 @@ internal static class GameActionService
             case "NTreasureRoom":
                 ReflectionRead.Invoke(scene, "OnProceedButtonReleased", button);
                 break;
+            case "NMerchantRoom":
+                ReflectionRead.Invoke(scene, "HideScreen", button);
+                break;
+            case "NSimpleCardsViewScreen":
+                ReflectionRead.Invoke(button, "ForceClick");
+                break;
             default:
                 throw InteractionChanged("proceed action is unavailable on this screen");
         }
+    }
+
+    private static void TravelMap(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        if (scene.GetType().Name != "NMapScreen"
+            || !(ReflectionRead.Bool(scene, "IsOpen") ?? false)
+            || !(ReflectionRead.Bool(scene, "IsTravelEnabled") ?? false)
+            || (ReflectionRead.Bool(scene, "IsTraveling") ?? false))
+            throw InteractionChanged("map is not ready for travel");
+
+        object? node = ReflectionRead.Items(ReflectionRead.Value(scene, "_mapPointDictionary", "MapPointDictionary"))
+            .Select(entry => ReflectionRead.Value(entry, "Value") ?? entry)
+            .FirstOrDefault(value => string.Equals(MapNodeId(value), candidate.TargetId, StringComparison.Ordinal));
+        if (node is null || !(ReflectionRead.Bool(node, "IsTravelable") ?? false))
+            throw InteractionChanged("map node is no longer reachable");
+        ReflectionRead.Invoke(node, "OnRelease");
+    }
+
+    private static string MapNodeId(object node)
+    {
+        object? coord = ReflectionRead.Value(ReflectionRead.Value(node, "Point"), "coord", "Coord");
+        return $"map:{ReflectionRead.Int(coord, "row", "Row", "Y")?.ToString() ?? "?"}:{ReflectionRead.Int(coord, "col", "Col", "X")?.ToString() ?? "?"}";
+    }
+
+    private static void SelectEventOption(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        if (scene.GetType().Name != "NEventRoom") throw InteractionChanged("event is unavailable");
+        object? button = ReflectionRead.Items(ReflectionRead.Value(ReflectionRead.Value(scene, "Layout"), "OptionButtons"))
+            .FirstOrDefault(value =>
+            {
+                object? option = ReflectionRead.Value(value, "Option");
+                int index = ReflectionRead.Int(value, "Index") ?? -1;
+                string optionId = $"event:{index}:{ReflectionRead.Text(option, "TextKey") ?? "option"}";
+                return string.Equals(optionId, candidate.OptionId, StringComparison.Ordinal);
+            });
+        object? selected = ReflectionRead.Value(button, "Option");
+        if (button is null || selected is null || (ReflectionRead.Bool(selected, "IsLocked") ?? true)
+            || !InteractionSnapshotService.ControlEnabled(button))
+            throw InteractionChanged("event option is no longer enabled");
+        ReflectionRead.Invoke(button, "OnRelease");
+    }
+
+    private static void OpenShop(object scene)
+    {
+        if (scene.GetType().Name != "NMerchantRoom") throw InteractionChanged("merchant room is unavailable");
+        object? button = ReflectionRead.Value(scene, "MerchantButton");
+        if (!InteractionSnapshotService.ControlEnabled(button)) throw InteractionChanged("merchant is unavailable");
+        ReflectionRead.Invoke(scene, "OnMerchantOpened", button);
+    }
+
+    private static void CloseShop(object scene)
+    {
+        if (scene.GetType().Name != "NMerchantInventory" || !(ReflectionRead.Bool(scene, "IsOpen") ?? false))
+            throw InteractionChanged("shop is not open");
+        object? button = ReflectionRead.Value(scene, "_backButton");
+        if (!InteractionSnapshotService.ControlEnabled(button)) throw InteractionChanged("shop cannot be closed now");
+        ReflectionRead.Invoke(scene, "Close");
+    }
+
+    private static object FindShopEntry(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        object? inventory = ReflectionRead.Value(scene, "Inventory");
+        object? entry = ReflectionRead.Items(ReflectionRead.Value(inventory, "AllEntries"))
+            .Select((value, index) => new { Entry = value, Index = index })
+            .FirstOrDefault(value =>
+            {
+                object? model = InteractionSnapshotService.ExtractModel(value.Entry, "Model", "CreationResult", "Card", "Potion", "Relic");
+                string kind = value.Entry.GetType().Name.Replace("Merchant", "").Replace("Entry", "").ToLowerInvariant();
+                string id = $"shop:{kind}:{RunInventoryService.InstanceId(model ?? value.Entry, value.Index.ToString())}";
+                return string.Equals(id, candidate.OptionId, StringComparison.Ordinal);
+            })?.Entry;
+        return entry ?? throw InteractionChanged("shop entry is no longer available");
+    }
+
+    private static void BuyShopItem(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        if (scene.GetType().Name != "NMerchantInventory" || (ReflectionRead.Bool(scene, "_isInputBlocked") ?? false))
+            throw InteractionChanged("shop is not ready");
+        object entry = FindShopEntry(scene, candidate);
+        if (!(ReflectionRead.Bool(entry, "IsStocked") ?? false) || !(ReflectionRead.Bool(entry, "EnoughGold") ?? false))
+            throw InteractionChanged("shop item is unavailable or unaffordable");
+        object? slot = ReflectionRead.Items(ReflectionRead.Invoke(scene, "GetAllSlots"))
+            .FirstOrDefault(value => ReferenceEquals(ReflectionRead.Value(value, "Entry"), entry));
+        if (slot is null || !InteractionSnapshotService.ControlEnabled(slot))
+            throw InteractionChanged("shop item control is unavailable");
+        _ = ReflectionRead.Invoke(slot, "OnSelected");
+    }
+
+    private static void OpenCardRemoval(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        if (scene.GetType().Name != "NMerchantInventory") throw InteractionChanged("shop is unavailable");
+        object entry = FindShopEntry(scene, candidate);
+        if (!(ReflectionRead.Bool(entry, "IsStocked") ?? false) || !(ReflectionRead.Bool(entry, "EnoughGold") ?? false))
+            throw InteractionChanged("card removal is unavailable or unaffordable");
+        object? node = ReflectionRead.Value(scene, "_cardRemovalNode");
+        if (node is null || !ReferenceEquals(ReflectionRead.Value(node, "Entry"), entry)
+            || !InteractionSnapshotService.ControlEnabled(node))
+            throw InteractionChanged("card removal control is unavailable");
+        _ = ReflectionRead.Invoke(node, "OnTryPurchase", ReflectionRead.Value(scene, "Inventory"));
+    }
+
+    private static void RemoveCard(object scene, InteractionActionSnapshotPayload candidate)
+    {
+        if (scene.GetType().Name != "NDeckCardSelectScreen")
+            throw InteractionChanged("card removal selection is unavailable");
+        CardModel? card = ReflectionRead.Items(ReflectionRead.Value(scene, "_cards", "Cards"))
+            .OfType<CardModel>()
+            .Select((value, index) => new { Card = value, Index = index })
+            .FirstOrDefault(value => string.Equals(
+                $"shop:remove:{RunInventoryService.InstanceId(value.Card, value.Index.ToString())}",
+                candidate.OptionId, StringComparison.Ordinal))?.Card;
+        if (card is null) throw InteractionChanged("card is no longer removable");
+        ReflectionRead.Invoke(scene, "OnCardClicked", card);
+        object? confirm = ReflectionRead.Value(scene, "_previewConfirmButton", "_confirmButton");
+        if (!InteractionSnapshotService.ControlEnabled(confirm))
+        {
+            ReflectionRead.Invoke(scene, "PreviewSelection");
+            confirm = ReflectionRead.Value(scene, "_previewConfirmButton", "_confirmButton");
+        }
+        if (confirm is null || !InteractionSnapshotService.ControlEnabled(confirm))
+            throw InteractionChanged("card removal confirmation is unavailable");
+        ReflectionRead.Invoke(scene, "ConfirmSelection", confirm);
     }
 
     private static ActionRequestException InteractionChanged(string message) => new(

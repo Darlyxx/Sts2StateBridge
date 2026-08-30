@@ -87,7 +87,7 @@ internal static class BridgeServer
             {
                 ok = true,
                 bridge = "Sts2StateBridge",
-                bridge_version = "0.10.0",
+                bridge_version = "0.11.0",
                 game_version_target = "v0.111.0",
                 write_enabled = BridgeConfiguration.WriteEnabled
             });
