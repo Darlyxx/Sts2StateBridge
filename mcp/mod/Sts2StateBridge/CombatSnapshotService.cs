@@ -13,7 +13,7 @@ namespace Sts2StateBridge;
 
 internal static class CombatSnapshotService
 {
-    public static CombatSnapshotPayload? Build(CombatState? combatState)
+    public static CombatSnapshotPayload? Build(CombatState? combatState, object? currentScreen)
     {
         if (combatState is null)
         {
@@ -25,6 +25,11 @@ internal static class CombatSnapshotService
         {
             return null;
         }
+
+        CombatSelectionSnapshotPayload? selection = CombatSelectionSnapshotService.Build(currentScreen);
+        string turnPhase = SafeRead(() => player.PlayerCombatState.Phase.ToString()) ?? "Unknown";
+        bool stablePlayPhase = combatState.CurrentSide == CombatSide.Player
+            && string.Equals(turnPhase, "Play", StringComparison.OrdinalIgnoreCase);
 
         CombatSnapshotPayload payload = new()
         {
@@ -46,13 +51,26 @@ internal static class CombatSnapshotService
                 .Select((card, index) => BuildHandCard(combatState, card, index))
                 .ToArray(),
             Enemies = combatState.Enemies
-                .Select((enemy, index) => BuildEnemy(enemy, index))
+                .Select((enemy, index) => BuildEnemy(combatState, enemy, index))
                 .ToArray(),
             Piles = BuildPiles(player),
             Potions = BuildPotions(player, combatState),
             Relics = BuildRelics(player)
         };
 
+        payload.Selection = selection;
+        payload.Readiness = new CombatReadinessSnapshotPayload
+        {
+            Ready = stablePlayPhase && selection is null,
+            PlayerTurnPhase = turnPhase,
+            InputLocked = !stablePlayPhase || selection is not null,
+            AnimationInProgress = combatState.CurrentSide == CombatSide.Player && !stablePlayPhase,
+            SelectionPending = selection is not null,
+            Reason = selection is not null
+                ? "selection_pending"
+                : stablePlayPhase ? null : "not_stable_play_phase"
+        };
+        payload.Derived = BuildDerived(payload);
         payload.Actions = BuildActions(payload);
         return payload;
     }
@@ -90,11 +108,28 @@ internal static class CombatSnapshotService
             CardId = SafeRead(() => card.Id.Entry),
             Name = SafeRead(() => card.Title),
             Upgraded = SafeReadNullable(() => card.IsUpgraded),
+            CardType = SafeRead(() => card.Type.ToString()),
+            Rarity = SafeRead(() => card.Rarity.ToString()),
+            CardPool = SafeRead(() => card.Pool.Id.Entry),
+            UpgradeLevel = SafeReadNullable(() => card.CurrentUpgradeLevel),
+            MaxUpgradeLevel = SafeReadNullable(() => card.MaxUpgradeLevel),
+            Keywords = ReadKeywords(card),
+            Affliction = BuildAffliction(card),
+            Retain = SafeReadNullable(() => card.ShouldRetainThisTurn),
+            Exhaust = SafeReadNullable(() => card.Keywords.Any(keyword => string.Equals(keyword.ToString(), "Exhaust", StringComparison.OrdinalIgnoreCase)) || card.ExhaustOnNextPlay),
+            Ethereal = SafeReadNullable(() => card.Keywords.Any(keyword => string.Equals(keyword.ToString(), "Ethereal", StringComparison.OrdinalIgnoreCase))),
+            Innate = SafeReadNullable(() => card.Keywords.Any(keyword => string.Equals(keyword.ToString(), "Innate", StringComparison.OrdinalIgnoreCase))),
+            Unplayable = SafeReadNullable(() => card.Keywords.Any(keyword => string.Equals(keyword.ToString(), "Unplayable", StringComparison.OrdinalIgnoreCase))),
+            ReplayCount = SafeReadNullable(() => card.GetEnchantedReplayCount()),
+            BaseEnergyCost = SafeReadNullable(() => card.EnergyCost.Canonical),
             EnergyCost = SafeReadNullable(() => card.EnergyCost.GetWithModifiers(CostModifiers.All)),
             CostsX = SafeReadNullable(() => card.EnergyCost.CostsX),
             StarCost = ReadCurrentStarCost(card),
             CostsStarX = SafeReadNullable(() => card.HasStarCostX) ?? false,
             Enchantment = RunInventoryService.BuildEnchantment(card),
+            DynamicValues = BuildDynamicValues(card),
+            EffectiveDamage = ReadEffectiveDynamicValue(card, "CalculatedDamage", "Damage"),
+            EffectiveBlock = ReadEffectiveDynamicValue(card, "CalculatedBlock", "Block"),
             TargetType = SafeRead(() => card.TargetType.ToString()),
             RequiresTarget = SafeReadNullable(() => RequiresTarget(card.TargetType)),
             ValidTargetIndices = SafeRead(
@@ -106,7 +141,7 @@ internal static class CombatSnapshotService
         };
     }
 
-    private static CombatEnemySnapshotPayload BuildEnemy(Creature enemy, int index)
+    private static CombatEnemySnapshotPayload BuildEnemy(CombatState combatState, Creature enemy, int index)
     {
         return new CombatEnemySnapshotPayload
         {
@@ -119,6 +154,14 @@ internal static class CombatSnapshotService
             Block = SafeReadNullable(() => enemy.Block),
             IsAlive = SafeReadNullable(() => enemy.IsAlive),
             IsHittable = SafeReadNullable(() => enemy.IsHittable),
+            IsDead = SafeReadNullable(() => enemy.IsDead),
+            IsStunned = SafeReadNullable(() => enemy.IsStunned),
+            IsEscaped = SafeReadNullable(() => combatState.EscapedCreatures.Contains(enemy)),
+            IsPet = SafeReadNullable(() => enemy.IsPet),
+            IsPrimaryEnemy = SafeReadNullable(() => enemy.IsPrimaryEnemy),
+            IsSecondaryEnemy = SafeReadNullable(() => enemy.IsSecondaryEnemy),
+            Side = SafeRead(() => enemy.Side.ToString()),
+            CombatId = SafeRead(() => enemy.CombatId?.ToString()),
             Powers = BuildPowers(enemy),
             Intents = BuildIntents(enemy)
         };
@@ -161,7 +204,7 @@ internal static class CombatSnapshotService
         }
     }
 
-    private static CombatPileCardSnapshotPayload BuildPileCard(CardModel card, int index)
+    internal static CombatPileCardSnapshotPayload BuildPileCard(CardModel card, int index)
     {
         return new CombatPileCardSnapshotPayload
         {
@@ -170,11 +213,28 @@ internal static class CombatSnapshotService
             CardId = SafeRead(() => card.Id.Entry),
             Name = SafeRead(() => card.Title),
             Upgraded = SafeReadNullable(() => card.IsUpgraded),
+            CardType = SafeRead(() => card.Type.ToString()),
+            Rarity = SafeRead(() => card.Rarity.ToString()),
+            CardPool = SafeRead(() => card.Pool.Id.Entry),
+            UpgradeLevel = SafeReadNullable(() => card.CurrentUpgradeLevel),
+            MaxUpgradeLevel = SafeReadNullable(() => card.MaxUpgradeLevel),
+            Keywords = ReadKeywords(card),
+            Affliction = BuildAffliction(card),
+            Retain = SafeReadNullable(() => card.ShouldRetainThisTurn),
+            Exhaust = SafeReadNullable(() => card.Keywords.Any(keyword => string.Equals(keyword.ToString(), "Exhaust", StringComparison.OrdinalIgnoreCase)) || card.ExhaustOnNextPlay),
+            Ethereal = SafeReadNullable(() => card.Keywords.Any(keyword => string.Equals(keyword.ToString(), "Ethereal", StringComparison.OrdinalIgnoreCase))),
+            Innate = SafeReadNullable(() => card.Keywords.Any(keyword => string.Equals(keyword.ToString(), "Innate", StringComparison.OrdinalIgnoreCase))),
+            Unplayable = SafeReadNullable(() => card.Keywords.Any(keyword => string.Equals(keyword.ToString(), "Unplayable", StringComparison.OrdinalIgnoreCase))),
+            ReplayCount = SafeReadNullable(() => card.GetEnchantedReplayCount()),
+            BaseEnergyCost = SafeReadNullable(() => card.EnergyCost.Canonical),
             EnergyCost = SafeReadNullable(() => card.EnergyCost.GetWithModifiers(CostModifiers.All)),
             CostsX = SafeReadNullable(() => card.EnergyCost.CostsX),
             StarCost = ReadCurrentStarCost(card),
             CostsStarX = SafeReadNullable(() => card.HasStarCostX) ?? false,
             Enchantment = RunInventoryService.BuildEnchantment(card),
+            DynamicValues = BuildDynamicValues(card),
+            EffectiveDamage = ReadEffectiveDynamicValue(card, "CalculatedDamage", "Damage"),
+            EffectiveBlock = ReadEffectiveDynamicValue(card, "CalculatedBlock", "Block"),
             RulesText = SafeRead(() => GetRulesText(card))
         };
     }
@@ -348,6 +408,89 @@ internal static class CombatSnapshotService
         }
     }
 
+    internal static string[] ReadKeywords(CardModel card)
+    {
+        try
+        {
+            return card.Keywords.Select(keyword => keyword.ToString())
+                .Where(keyword => !string.IsNullOrWhiteSpace(keyword))
+                .OrderBy(keyword => keyword, StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    internal static CombatAfflictionSnapshotPayload? BuildAffliction(CardModel card)
+    {
+        try
+        {
+            object? affliction = card.Affliction;
+            if (affliction is null) return null;
+            return new CombatAfflictionSnapshotPayload
+            {
+                AfflictionId = ReadNestedEntry(affliction, "Id"),
+                Name = ReadLocalizedProperty(affliction, "Title"),
+                Amount = TryConvertInt(ReflectionRead.Value(affliction, "Amount")),
+                RulesText = ReadModelRulesText(affliction)
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    internal static CombatDynamicValueSnapshotPayload[] BuildDynamicValues(CardModel card)
+    {
+        try
+        {
+            return card.DynamicVars.Values.Select(value => new CombatDynamicValueSnapshotPayload
+            {
+                Name = SafeRead(() => value.Name),
+                BaseValue = SafeReadNullable(() => value.BaseValue),
+                Value = SafeReadNullable(() => value.IntValue),
+                PreviewValue = SafeReadNullable(() => value.PreviewValue),
+                EnchantedValue = SafeReadNullable(() => value.EnchantedValue)
+            }).OrderBy(value => value.Name, StringComparer.Ordinal).ToArray();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    internal static int? ReadEffectiveDynamicValue(CardModel card, params string[] names)
+    {
+        foreach (string name in names)
+        {
+            try
+            {
+                object? value = ReflectionRead.Value(card.DynamicVars, name);
+                int? result = ReflectionRead.Int(value, "IntValue");
+                if (result is not null) return result;
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    private static CombatDerivedSnapshotPayload BuildDerived(CombatSnapshotPayload snapshot)
+    {
+        int totalIncoming = snapshot.Enemies
+            .Where(enemy => enemy.IsAlive != false)
+            .SelectMany(enemy => enemy.Intents)
+            .Sum(intent => intent.TotalDamage ?? 0);
+        return new CombatDerivedSnapshotPayload
+        {
+            Derived = true,
+            VisibleIncomingAttackDamage = totalIncoming,
+            EstimatedUnblockedDamage = Math.Max(0, totalIncoming - snapshot.Player.Block)
+        };
+    }
+
     private static CombatActionSnapshotPayload[] BuildActions(CombatSnapshotPayload snapshot)
     {
         if (!snapshot.IsPlayerTurn)
@@ -449,7 +592,7 @@ internal static class CombatSnapshotService
     {
         foreach (string propertyName in new[]
                  {
-                     "Description", "DescriptionLocString", "RulesText", "Tooltip"
+                     "DynamicDescription", "Description", "DescriptionLocString", "RulesText", "Tooltip"
                  })
         {
             string? text = ReadLocalizedProperty(value, propertyName);
@@ -532,15 +675,91 @@ internal static class CombatSnapshotService
             statusCardCount = SafeReadNullable(() => statusIntent.CardCount);
         }
 
+        string? intentType = SafeRead(() => intent.IntentType.ToString());
+        string? label = SafeRead(() => intent.GetIntentLabel(targets, owner).GetFormattedText());
+        object? hoverTip = SafeRead(() => intent.GetHoverTip(targets, owner));
+        string? title = ReflectionRead.Text(hoverTip, "Title");
+        string? description = ReflectionRead.Text(hoverTip, "Description");
+        string[] targetInstanceIds = ReadVisibleIntentTargets(intentType, owner, targets);
+        List<CombatIntentEffectSnapshotPayload> effects = new();
+        if (damage is not null)
+        {
+            effects.Add(new CombatIntentEffectSnapshotPayload
+            {
+                EffectType = "attack",
+                Amount = damage,
+                Hits = hits,
+                Total = totalDamage,
+                Derived = true
+            });
+        }
+        else if (statusCardCount is not null)
+        {
+            effects.Add(new CombatIntentEffectSnapshotPayload
+            {
+                EffectType = "add_status_cards",
+                Amount = statusCardCount,
+                Derived = false
+            });
+        }
+        else if (!string.IsNullOrWhiteSpace(intentType))
+        {
+            effects.Add(new CombatIntentEffectSnapshotPayload
+            {
+                EffectType = NormalizeIntentEffectType(intentType),
+                Description = !string.IsNullOrWhiteSpace(description) ? description : label,
+                Derived = false
+            });
+        }
+
         return new CombatIntentSnapshotPayload
         {
             Index = index,
-            IntentType = SafeRead(() => intent.IntentType.ToString()),
-            Label = SafeRead(() => intent.GetIntentLabel(targets, owner).GetFormattedText()),
+            IntentType = intentType,
+            Label = label,
+            Title = title,
+            Description = description,
+            TargetInstanceIds = targetInstanceIds,
             Damage = damage,
             Hits = hits,
             TotalDamage = totalDamage,
-            StatusCardCount = statusCardCount
+            StatusCardCount = statusCardCount,
+            Effects = effects.ToArray()
+        };
+    }
+
+    private static string[] ReadVisibleIntentTargets(string? intentType, Creature owner, Creature[] players)
+    {
+        string normalized = intentType?.ToLowerInvariant() ?? string.Empty;
+        if (normalized is "attack" or "debuff" or "strongdebuff" or "debuffstrong" or "carddebuff" or "status" or "deathblow")
+        {
+            return players.Select((target, index) => GetInstanceId(target, $"player:{index}")).ToArray();
+        }
+
+        if (normalized is "buff" or "defend" or "heal" or "sleep" or "escape" or "stun")
+        {
+            return [GetInstanceId(owner, "intent_owner")];
+        }
+
+        return [];
+    }
+
+    private static string NormalizeIntentEffectType(string intentType)
+    {
+        return intentType.ToLowerInvariant() switch
+        {
+            "buff" => "buff",
+            "debuff" or "strongdebuff" or "debuffstrong" => "debuff",
+            "defend" => "gain_block",
+            "heal" => "heal",
+            "summon" => "summon",
+            "stun" => "stun",
+            "escape" => "escape",
+            "sleep" => "sleep",
+            "deathblow" => "death_blow",
+            "carddebuff" => "card_debuff",
+            "hidden" => "hidden",
+            _ => "special"
         };
     }
 
@@ -574,10 +793,20 @@ internal static class CombatSnapshotService
                 result.Add(new CombatPowerSnapshotPayload
                 {
                     Index = index,
+                    InstanceId = GetInstanceId(power, $"power:{index}"),
                     PowerId = id?.GetType().GetProperty("Entry")?.GetValue(id)?.ToString(),
                     Name = title?.GetType().GetMethod("GetFormattedText")?.Invoke(title, null)?.ToString(),
                     Amount = TryConvertInt(amount),
-                    IsDebuff = string.Equals(powerType?.ToString(), "Debuff", StringComparison.Ordinal)
+                    DisplayAmount = TryConvertInt(ReflectionRead.Value(power, "DisplayAmount")),
+                    AmountOnTurnStart = TryConvertInt(ReflectionRead.Value(power, "AmountOnTurnStart")),
+                    IsDebuff = string.Equals(powerType?.ToString(), "Debuff", StringComparison.Ordinal),
+                    PowerType = powerType?.ToString(),
+                    InstanceType = ReflectionRead.Text(power, "InstanceType"),
+                    StackType = ReflectionRead.Text(power, "StackType"),
+                    IsVisible = ReflectionRead.Bool(power, "IsVisible"),
+                    OwnerInstanceId = ReadCreatureInstanceId(ReflectionRead.Value(power, "Owner"), "power_owner"),
+                    TargetInstanceId = ReadCreatureInstanceId(ReflectionRead.Value(power, "Target"), "power_target"),
+                    RulesText = ReadModelRulesText(power)
                 });
                 index++;
             }
@@ -588,6 +817,11 @@ internal static class CombatSnapshotService
         {
             return Array.Empty<CombatPowerSnapshotPayload>();
         }
+    }
+
+    private static string? ReadCreatureInstanceId(object? value, string fallback)
+    {
+        return value is Creature creature ? GetInstanceId(creature, fallback) : null;
     }
 
     private static int[] GetValidTargetIndices(CombatState combatState, CardModel card)
@@ -734,6 +968,15 @@ internal sealed class CombatSnapshotPayload
     [JsonPropertyName("is_player_turn")]
     public bool IsPlayerTurn { get; init; }
 
+    [JsonPropertyName("readiness")]
+    public CombatReadinessSnapshotPayload? Readiness { get; set; }
+
+    [JsonPropertyName("selection")]
+    public CombatSelectionSnapshotPayload? Selection { get; set; }
+
+    [JsonPropertyName("derived")]
+    public CombatDerivedSnapshotPayload? Derived { get; set; }
+
     [JsonPropertyName("player")]
     public required CombatPlayerSnapshotPayload Player { get; init; }
 
@@ -797,6 +1040,48 @@ internal sealed class CombatHandCardSnapshotPayload
     [JsonPropertyName("upgraded")]
     public bool? Upgraded { get; init; }
 
+    [JsonPropertyName("card_type")]
+    public string? CardType { get; init; }
+
+    [JsonPropertyName("rarity")]
+    public string? Rarity { get; init; }
+
+    [JsonPropertyName("card_pool")]
+    public string? CardPool { get; init; }
+
+    [JsonPropertyName("upgrade_level")]
+    public int? UpgradeLevel { get; init; }
+
+    [JsonPropertyName("max_upgrade_level")]
+    public int? MaxUpgradeLevel { get; init; }
+
+    [JsonPropertyName("keywords")]
+    public string[] Keywords { get; init; } = [];
+
+    [JsonPropertyName("affliction")]
+    public CombatAfflictionSnapshotPayload? Affliction { get; init; }
+
+    [JsonPropertyName("retain")]
+    public bool? Retain { get; init; }
+
+    [JsonPropertyName("exhaust")]
+    public bool? Exhaust { get; init; }
+
+    [JsonPropertyName("ethereal")]
+    public bool? Ethereal { get; init; }
+
+    [JsonPropertyName("innate")]
+    public bool? Innate { get; init; }
+
+    [JsonPropertyName("unplayable")]
+    public bool? Unplayable { get; init; }
+
+    [JsonPropertyName("replay_count")]
+    public int? ReplayCount { get; init; }
+
+    [JsonPropertyName("base_energy_cost")]
+    public int? BaseEnergyCost { get; init; }
+
     [JsonPropertyName("energy_cost")]
     public int? EnergyCost { get; init; }
 
@@ -811,6 +1096,15 @@ internal sealed class CombatHandCardSnapshotPayload
 
     [JsonPropertyName("enchantment")]
     public CardEnchantmentSnapshotPayload? Enchantment { get; init; }
+
+    [JsonPropertyName("dynamic_values")]
+    public CombatDynamicValueSnapshotPayload[] DynamicValues { get; init; } = [];
+
+    [JsonPropertyName("effective_damage")]
+    public int? EffectiveDamage { get; init; }
+
+    [JsonPropertyName("effective_block")]
+    public int? EffectiveBlock { get; init; }
 
     [JsonPropertyName("target_type")]
     public string? TargetType { get; init; }
@@ -860,6 +1154,30 @@ internal sealed class CombatEnemySnapshotPayload
     [JsonPropertyName("is_hittable")]
     public bool? IsHittable { get; init; }
 
+    [JsonPropertyName("is_dead")]
+    public bool? IsDead { get; init; }
+
+    [JsonPropertyName("is_stunned")]
+    public bool? IsStunned { get; init; }
+
+    [JsonPropertyName("is_escaped")]
+    public bool? IsEscaped { get; init; }
+
+    [JsonPropertyName("is_pet")]
+    public bool? IsPet { get; init; }
+
+    [JsonPropertyName("is_primary_enemy")]
+    public bool? IsPrimaryEnemy { get; init; }
+
+    [JsonPropertyName("is_secondary_enemy")]
+    public bool? IsSecondaryEnemy { get; init; }
+
+    [JsonPropertyName("side")]
+    public string? Side { get; init; }
+
+    [JsonPropertyName("combat_id")]
+    public string? CombatId { get; init; }
+
     [JsonPropertyName("powers")]
     public CombatPowerSnapshotPayload[] Powers { get; init; } = [];
 
@@ -872,6 +1190,9 @@ internal sealed class CombatPowerSnapshotPayload
     [JsonPropertyName("index")]
     public int Index { get; init; }
 
+    [JsonPropertyName("instance_id")]
+    public string? InstanceId { get; init; }
+
     [JsonPropertyName("power_id")]
     public string? PowerId { get; init; }
 
@@ -881,8 +1202,35 @@ internal sealed class CombatPowerSnapshotPayload
     [JsonPropertyName("amount")]
     public int? Amount { get; init; }
 
+    [JsonPropertyName("display_amount")]
+    public int? DisplayAmount { get; init; }
+
+    [JsonPropertyName("amount_on_turn_start")]
+    public int? AmountOnTurnStart { get; init; }
+
     [JsonPropertyName("is_debuff")]
     public bool IsDebuff { get; init; }
+
+    [JsonPropertyName("power_type")]
+    public string? PowerType { get; init; }
+
+    [JsonPropertyName("instance_type")]
+    public string? InstanceType { get; init; }
+
+    [JsonPropertyName("stack_type")]
+    public string? StackType { get; init; }
+
+    [JsonPropertyName("is_visible")]
+    public bool? IsVisible { get; init; }
+
+    [JsonPropertyName("owner_instance_id")]
+    public string? OwnerInstanceId { get; init; }
+
+    [JsonPropertyName("target_instance_id")]
+    public string? TargetInstanceId { get; init; }
+
+    [JsonPropertyName("rules_text")]
+    public string? RulesText { get; init; }
 }
 
 internal sealed class CombatIntentSnapshotPayload
@@ -896,6 +1244,12 @@ internal sealed class CombatIntentSnapshotPayload
     [JsonPropertyName("label")]
     public string? Label { get; init; }
 
+    [JsonPropertyName("title")]
+    public string? Title { get; init; }
+
+    [JsonPropertyName("description")]
+    public string? Description { get; init; }
+
     [JsonPropertyName("damage")]
     public int? Damage { get; init; }
 
@@ -907,6 +1261,12 @@ internal sealed class CombatIntentSnapshotPayload
 
     [JsonPropertyName("status_card_count")]
     public int? StatusCardCount { get; init; }
+
+    [JsonPropertyName("target_instance_ids")]
+    public string[] TargetInstanceIds { get; init; } = [];
+
+    [JsonPropertyName("effects")]
+    public CombatIntentEffectSnapshotPayload[] Effects { get; init; } = [];
 }
 
 internal sealed class CombatPileSnapshotPayload
@@ -941,6 +1301,48 @@ internal sealed class CombatPileCardSnapshotPayload
     [JsonPropertyName("upgraded")]
     public bool? Upgraded { get; init; }
 
+    [JsonPropertyName("card_type")]
+    public string? CardType { get; init; }
+
+    [JsonPropertyName("rarity")]
+    public string? Rarity { get; init; }
+
+    [JsonPropertyName("card_pool")]
+    public string? CardPool { get; init; }
+
+    [JsonPropertyName("upgrade_level")]
+    public int? UpgradeLevel { get; init; }
+
+    [JsonPropertyName("max_upgrade_level")]
+    public int? MaxUpgradeLevel { get; init; }
+
+    [JsonPropertyName("keywords")]
+    public string[] Keywords { get; init; } = [];
+
+    [JsonPropertyName("affliction")]
+    public CombatAfflictionSnapshotPayload? Affliction { get; init; }
+
+    [JsonPropertyName("retain")]
+    public bool? Retain { get; init; }
+
+    [JsonPropertyName("exhaust")]
+    public bool? Exhaust { get; init; }
+
+    [JsonPropertyName("ethereal")]
+    public bool? Ethereal { get; init; }
+
+    [JsonPropertyName("innate")]
+    public bool? Innate { get; init; }
+
+    [JsonPropertyName("unplayable")]
+    public bool? Unplayable { get; init; }
+
+    [JsonPropertyName("replay_count")]
+    public int? ReplayCount { get; init; }
+
+    [JsonPropertyName("base_energy_cost")]
+    public int? BaseEnergyCost { get; init; }
+
     [JsonPropertyName("energy_cost")]
     public int? EnergyCost { get; init; }
 
@@ -955,6 +1357,15 @@ internal sealed class CombatPileCardSnapshotPayload
 
     [JsonPropertyName("enchantment")]
     public CardEnchantmentSnapshotPayload? Enchantment { get; init; }
+
+    [JsonPropertyName("dynamic_values")]
+    public CombatDynamicValueSnapshotPayload[] DynamicValues { get; init; } = [];
+
+    [JsonPropertyName("effective_damage")]
+    public int? EffectiveDamage { get; init; }
+
+    [JsonPropertyName("effective_block")]
+    public int? EffectiveBlock { get; init; }
 
     [JsonPropertyName("rules_text")]
     public string? RulesText { get; init; }
@@ -1039,6 +1450,50 @@ internal sealed class CombatActionSnapshotPayload
 
     [JsonPropertyName("target_index")]
     public int? TargetIndex { get; init; }
+}
+
+internal sealed class CombatReadinessSnapshotPayload
+{
+    [JsonPropertyName("ready")] public bool Ready { get; init; }
+    [JsonPropertyName("player_turn_phase")] public string? PlayerTurnPhase { get; init; }
+    [JsonPropertyName("input_locked")] public bool InputLocked { get; init; }
+    [JsonPropertyName("animation_in_progress")] public bool AnimationInProgress { get; init; }
+    [JsonPropertyName("selection_pending")] public bool SelectionPending { get; init; }
+    [JsonPropertyName("reason")] public string? Reason { get; init; }
+}
+
+internal sealed class CombatDerivedSnapshotPayload
+{
+    [JsonPropertyName("derived")] public bool Derived { get; init; }
+    [JsonPropertyName("visible_incoming_attack_damage")] public int VisibleIncomingAttackDamage { get; init; }
+    [JsonPropertyName("estimated_unblocked_damage")] public int EstimatedUnblockedDamage { get; init; }
+}
+
+internal sealed class CombatDynamicValueSnapshotPayload
+{
+    [JsonPropertyName("name")] public string? Name { get; init; }
+    [JsonPropertyName("base_value")] public decimal? BaseValue { get; init; }
+    [JsonPropertyName("value")] public int? Value { get; init; }
+    [JsonPropertyName("preview_value")] public decimal? PreviewValue { get; init; }
+    [JsonPropertyName("enchanted_value")] public decimal? EnchantedValue { get; init; }
+}
+
+internal sealed class CombatAfflictionSnapshotPayload
+{
+    [JsonPropertyName("affliction_id")] public string? AfflictionId { get; init; }
+    [JsonPropertyName("name")] public string? Name { get; init; }
+    [JsonPropertyName("amount")] public int? Amount { get; init; }
+    [JsonPropertyName("rules_text")] public string? RulesText { get; init; }
+}
+
+internal sealed class CombatIntentEffectSnapshotPayload
+{
+    [JsonPropertyName("effect_type")] public required string EffectType { get; init; }
+    [JsonPropertyName("amount")] public int? Amount { get; init; }
+    [JsonPropertyName("hits")] public int? Hits { get; init; }
+    [JsonPropertyName("total")] public int? Total { get; init; }
+    [JsonPropertyName("description")] public string? Description { get; init; }
+    [JsonPropertyName("derived")] public bool Derived { get; init; }
 }
 
 internal sealed class StarsMechanicSnapshotPayload

@@ -11,6 +11,9 @@ class ConfigurationError(ValueError):
     """Required local configuration is missing or invalid."""
 
 
+DEFAULT_SKILL_PATH = Path(__file__).resolve().parents[3] / "skills" / "sts2-ironclad-player"
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     api_key: str
@@ -18,6 +21,7 @@ class Settings:
     model: str = "deepseek-v4-flash"
     bridge_url: str = "http://127.0.0.1:38281"
     mcp_directory: Path = Path(__file__).resolve().parents[3] / "mcp" / "server"
+    skill_path: Path = DEFAULT_SKILL_PATH
     timeout_seconds: float = 60.0
 
     @classmethod
@@ -36,6 +40,7 @@ class Settings:
             raise ConfigurationError("LLM_TIMEOUT_SECONDS 必须大于 0。")
         default_mcp_directory = Path(__file__).resolve().parents[3] / "mcp" / "server"
         configured_mcp_directory = os.getenv("STS2_MCP_DIRECTORY", "").strip()
+        configured_skill_path = os.getenv("STS2_SKILL_PATH", "").strip()
         return cls(
             api_key=api_key,
             base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com").strip().rstrip("/"),
@@ -44,5 +49,6 @@ class Settings:
             mcp_directory=Path(configured_mcp_directory or default_mcp_directory)
             .expanduser()
             .resolve(),
+            skill_path=Path(configured_skill_path or DEFAULT_SKILL_PATH).expanduser().resolve(),
             timeout_seconds=timeout,
         )

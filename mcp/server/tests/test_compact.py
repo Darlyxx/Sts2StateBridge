@@ -92,3 +92,68 @@ def test_legacy_stars_are_normalized_to_mechanics_without_mutating_input():
     assert combat["player"]["mechanics"] == [{"type": "stars", "current": 4}]
     assert "stars" not in combat["player"]
     assert snapshot["combat"]["player"]["stars"] == 4
+
+
+def test_combat_keeps_readiness_selection_dynamic_values_and_derived_summary():
+    snapshot = {
+        "schema_version": 2,
+        "bridge_version": "0.12.0",
+        "state_id": "combat-read-1",
+        "phase": "combat",
+        "in_run": True,
+        "in_combat": True,
+        "combat": {
+            "readiness": {
+                "ready": False,
+                "player_turn_phase": "Play",
+                "input_locked": True,
+                "selection_pending": True,
+                "reason": "selection_pending",
+            },
+            "selection": {
+                "selection_type": "choose_card",
+                "screen_type": "NChooseACardSelectionScreen",
+                "ready": True,
+                "min_select": 1,
+                "max_select": 1,
+                "candidates": [{
+                    "instance_id": "choice-1",
+                    "enabled": True,
+                    "card": {
+                        "card_id": "BASH",
+                        "card_type": "Attack",
+                        "rarity": "Basic",
+                        "keywords": ["Exhaust"],
+                        "base_energy_cost": 2,
+                        "energy_cost": 1,
+                        "effective_damage": 10,
+                        "dynamic_values": [{"name": "Damage", "value": 10}],
+                    },
+                }],
+            },
+            "derived": {
+                "derived": True,
+                "visible_incoming_attack_damage": 12,
+                "estimated_unblocked_damage": 7,
+            },
+            "enemies": [{
+                "instance_id": "enemy-1",
+                "is_stunned": False,
+                "side": "Enemy",
+                "intents": [{
+                    "intent_type": "Attack",
+                    "total_damage": 12,
+                    "target_instance_ids": ["player-1"],
+                    "effects": [{"effect_type": "attack", "total": 12, "derived": True}],
+                }],
+            }],
+            "actions": [{"action_id": "end_turn", "type": "end_turn"}],
+        },
+    }
+
+    combat = compact_snapshot(snapshot)["combat"]
+    assert combat["selection"]["candidates"][0]["card"]["effective_damage"] == 10
+    assert combat["readiness"]["selection_pending"] is True
+    assert combat["derived"]["estimated_unblocked_damage"] == 7
+    assert combat["enemies"][0]["intents"][0]["effects"][0]["effect_type"] == "attack"
+    assert combat["actions"] == [{"action_id": "end_turn", "type": "end_turn"}]

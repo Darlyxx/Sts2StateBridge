@@ -1,0 +1,14 @@
+interface:
+  display_name: "STS2 Ironclad Player"
+  short_description: "进阶10战士自主战斗、构筑与路线决策手册"
+  default_prompt: "Use $sts2-ironclad-player to autonomously play the current Ironclad run."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "sts2"
+      description: "Read the current Slay the Spire 2 state and execute candidate actions."
+      transport: "stdio"
+
+policy:
+  allow_implicit_invocation: true

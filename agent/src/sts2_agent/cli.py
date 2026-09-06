@@ -38,8 +38,10 @@ def _print_stream(agent, question: str, full_state: bool) -> None:
             "get_combat_state": "战斗状态",
             "get_interaction": "当前交互",
             "get_full_snapshot": "完整快照",
+            "execute_action": "游戏动作",
         }
-        print(f"\n[正在读取{labels.get(name, name)}...]\n")
+        verb = "执行" if name == "execute_action" else "读取"
+        print(f"\n[正在{verb}{labels.get(name, name)}...]\n")
 
     state, chunks = agent.ask_stream(question, full_state=full_state, on_tool_call=tool_notice)
     print()

@@ -20,7 +20,7 @@ internal static class SnapshotService
         bool hasCombatState = combatState is not null;
         RunSnapshotPayload? run = BuildRunSnapshot(runState);
         CombatSnapshotPayload? combat = combatInProgress
-            ? CombatSnapshotService.Build(combatState)
+            ? CombatSnapshotService.Build(combatState, currentScreen)
             : null;
         InteractionSnapshotPayload? interaction = combat is null && runState is not null
             ? InteractionSnapshotService.Build(currentScreen, runState)
@@ -98,10 +98,10 @@ internal static class SnapshotService
 internal sealed class SnapshotPayload
 {
     [JsonPropertyName("schema_version")]
-    public int SchemaVersion { get; init; } = 1;
+    public int SchemaVersion { get; init; } = 2;
 
     [JsonPropertyName("bridge_version")]
-    public string BridgeVersion { get; init; } = "0.11.0";
+    public string BridgeVersion { get; init; } = "0.12.0";
 
     [JsonPropertyName("state_id")]
     public string? StateId { get; set; }

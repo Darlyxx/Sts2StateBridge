@@ -21,6 +21,7 @@ mcp/server                     独立 stdio MCP Server
 │  ├─ mod/Sts2StateBridge/     # 游戏内 C# Bridge Mod
 │  └─ server/                  # 独立 Python MCP Server 与测试
 ├─ agent/                      # 可选 LangChain/DeepSeek 客户端
+├─ skills/sts2-ironclad-player # 战士自主游戏策略 Skill
 ├─ scripts/build-release.ps1   # 生成不含游戏 DLL 的 MCP 发布包
 ├─ RELEASING.md                # 维护者发布流程
 ├─ .gitignore
@@ -37,9 +38,9 @@ mcp/server                     独立 stdio MCP Server
 
 ## 当前版本与能力
 
-- Mod：`0.11.0`，目标游戏 `v0.111.0`，使用 `.NET 9`
-- MCP Server：`0.11.0`，Python 3.11+
-- Agent：`0.6.0`，Python 3.11+
+- Mod：`0.12.0`，目标游戏 `v0.111.0`，使用 `.NET 9`
+- MCP Server：`0.12.0`，Python 3.11+
+- Agent：`0.7.0`，Python 3.11+
 - Bridge：`http://127.0.0.1:38281`，只监听本机
 - 写操作：默认关闭，必须由本机配置明确开启
 
@@ -164,6 +165,7 @@ Windows JSON 中一个 `\` 必须写成 `\\`。`127.0.0.1` 表示每个用户自
 ## 使用项目自带 Agent
 
 Agent 默认使用 LangChain，通过独立 MCP Server 读取游戏。DeepSeek 或其他 OpenAI 兼容服务只需修改 URL、Key 和模型名。
+默认还会加载内置的 `sts2-ironclad-player` Skill，指导廉价模型以单人进阶 10 通关率为目标操作战士。Skill 是策略提示与参考知识，不是执行代码；真正读取和执行仍由 MCP 工具完成。
 
 ```powershell
 cd agent
@@ -180,9 +182,14 @@ LLM_API_KEY=你的_API_Key
 LLM_MODEL=deepseek-v4-flash
 LLM_TIMEOUT_SECONDS=60
 STS2_MCP_DIRECTORY=
+STS2_SKILL_PATH=
 ```
 
-完整仓库中 `STS2_MCP_DIRECTORY` 留空即可自动找到 `mcp/server`。单次提问：
+完整仓库中两个路径变量留空即可自动找到 `mcp/server` 与内置 Skill。只询问状态或分析时 Agent 不会执行动作；明确要求“开始、继续或完成战斗/房间/爬塔”后，Agent 可在该范围内自主调用合法动作，无需逐步确认。首次状态不是 `IRONCLAD` 时，不应用战士策略。
+
+若要替换策略，把 `STS2_SKILL_PATH` 指向一个包含 `SKILL.md` 和 `references/ironclad-playbook.md` 的目录。文件缺失或不是 UTF-8 时 Agent 会停止并明确报错。
+
+单次提问：
 
 ```powershell
 uv run sts2-agent ask "分析当前局面，推荐这一回合的出牌顺序"
@@ -203,6 +210,15 @@ agent = Sts2Agent.from_env()
 answer = agent.ask("现在应该怎么打？")
 print(answer.text, answer.phase, answer.state_id)
 ```
+
+### 给第三方 Agent 使用 Skill
+
+第三方 Agent 可把以下两个文件按顺序合并进系统提示，然后继续使用本项目 MCP：
+
+- `skills/sts2-ironclad-player/SKILL.md`
+- `skills/sts2-ironclad-player/references/ironclad-playbook.md`
+
+`references/sources.md` 用于审计资料版本和偏差，不需要注入模型。精确卡牌文本、费用、敌人意图和合法动作始终以最新 MCP 快照为准，Skill 中的经验不能覆盖当前游戏状态。
 
 ## 依赖与测试
 

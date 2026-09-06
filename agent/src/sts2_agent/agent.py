@@ -14,6 +14,7 @@ from .agent_types import AgentAnswer, LlmError, friendly_llm_error
 from .config import Settings
 from .mcp_client import Sts2McpClient
 from .prompts import SYSTEM_PROMPT
+from .skill_loader import load_skill_prompt
 
 
 def _message_text(message: BaseMessage) -> str:
@@ -31,7 +32,7 @@ def _message_text(message: BaseMessage) -> str:
 class Sts2Agent:
     """LangChain tool-calling agent backed exclusively by the STS2 MCP Server."""
 
-    recursion_limit = 10
+    recursion_limit = 40
 
     def __init__(
         self,
@@ -55,7 +56,12 @@ class Sts2Agent:
                 max_retries=2,
                 streaming=True,
             )
-            graph = create_agent(model=model, tools=self.tools, system_prompt=SYSTEM_PROMPT)
+            skill_prompt = load_skill_prompt(settings.skill_path)
+            graph = create_agent(
+                model=model,
+                tools=self.tools,
+                system_prompt=f"{SYSTEM_PROMPT}\n\n{skill_prompt}",
+            )
         self.graph = graph
         self.history: list[BaseMessage] = []
         self.state_id: str | None = None

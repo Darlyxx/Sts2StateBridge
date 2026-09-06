@@ -19,8 +19,8 @@ class CountingBridge:
     def get_snapshot(self):
         self.calls += 1
         return {
-            "schema_version": 1,
-            "bridge_version": "0.7.0",
+            "schema_version": 2,
+            "bridge_version": "0.12.0",
             "state_id": f"mcp-{self.calls}",
             "phase": "combat",
             "in_run": True,

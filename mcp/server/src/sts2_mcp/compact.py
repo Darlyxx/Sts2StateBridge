@@ -4,7 +4,7 @@ from typing import Any
 
 
 RUN_KEYS = {"character_id", "character_name", "current_hp", "max_hp", "gold", "floor", "act_number", "act_floor", "act_id", "ascension", "deck", "relics", "potions"}
-COMBAT_KEYS = {"round", "current_side", "is_player_turn", "player", "hand", "enemies", "piles", "potions", "relics", "actions"}
+COMBAT_KEYS = {"round", "current_side", "is_player_turn", "readiness", "selection", "derived", "player", "hand", "enemies", "piles", "potions", "relics", "actions"}
 INTERACTION_KEYS = {"type", "ready", "screen_type", "title", "description", "options", "actions", "map", "treasure", "player_gold"}
 
 
