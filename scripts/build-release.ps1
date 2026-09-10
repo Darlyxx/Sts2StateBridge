@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Sts2ManagedDir,
 
-    [string]$Version = "0.12.0"
+    [string]$Version = "0.13.0"
 )
 
 $ErrorActionPreference = "Stop"

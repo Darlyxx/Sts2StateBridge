@@ -21,12 +21,14 @@ uv run sts2-mcp
 
 游戏写操作还必须在 Mod 的本机配置中显式启用。
 
-`get_combat_state` 和 `get_interaction` 会返回当前状态对应的动作候选。`execute_action` 只接受同一最新快照中的 `state_id` 与 `action_id`；当前支持战斗、奖励、卡牌奖励、药水丢弃、宝箱、休息点、锻造、地图移动、事件选择，以及商店购买和删牌操作。
+`get_combat_state` 和 `get_interaction` 会返回当前状态对应的动作候选。`execute_action` 只接受同一最新快照中的 `state_id` 与 `action_id`；当前还支持临时选牌、多选确认、取消/跳过及卡牌附魔选择。
 
-从 `0.12.0` 开始，战斗快照 schema 为版本 2，并额外包含：
+战斗快照 schema 保持版本 2；`0.13.0` 在向后兼容的基础上包含：
 
 - `readiness`：当前玩家回合阶段、输入锁定、动画和选择弹窗状态。
-- `selection`：卡牌药水、卡牌组合及战斗牌堆选择等只读候选；这些字段不会新增操作能力。
+- `selection`：卡牌药水、卡牌组合、战斗牌堆、手牌及局外附魔的候选和选择进度。
+- `selection:*` 动作：选择/取消选择实例、确认、取消或跳过；每一步都必须重新读取 `state_id`。
+- `readiness.cards_playable_remaining`：使用稳定 Affliction ID 识别当前公开的出牌次数限制。
 - 卡牌类型、稀有度、关键词、动态费用、动态数值、附魔与异变信息。
 - 敌人的可见状态、结构化意图效果，以及基于当前公开信息计算的来袭伤害汇总。
 

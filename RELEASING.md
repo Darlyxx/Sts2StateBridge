@@ -1,6 +1,6 @@
 # 发布流程
 
-当前仓库使用项目 Release 版本 `v0.12.0`，与 Bridge Mod 和 MCP Server 版本对齐。Agent 在自己的 `pyproject.toml` 中保留独立组件版本。
+当前开发版本为 `v0.13.0`，与 Bridge Mod 和 MCP Server 版本对齐。完成游戏内监督验收后再创建 Release；Agent 在自己的 `pyproject.toml` 中保留独立组件版本。
 
 ## 发布前检查
 
@@ -25,14 +25,14 @@ dotnet build .\mcp\mod\Sts2StateBridge\Sts2StateBridge.csproj `
 
 ```powershell
 .\scripts\build-release.ps1 `
-  -Version 0.12.0 `
+  -Version 0.13.0 `
   -Sts2ManagedDir "E:\SteamLibrary\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64"
 ```
 
 输出：
 
 ```text
-release/Sts2StateBridge-MCP-v0.12.0.zip
+release/Sts2StateBridge-MCP-v0.13.0.zip
 ```
 
 压缩包只包含可分发的 Mod 产物、独立 MCP Server、安装说明和 MIT License，不包含游戏 DLL、虚拟环境、缓存、测试或 API Key。
@@ -42,12 +42,12 @@ release/Sts2StateBridge-MCP-v0.12.0.zip
 先提交并推送全部变更，再创建标签和 Release：
 
 ```powershell
-git tag -a v0.12.0 -m "Sts2StateBridge v0.12.0"
+git tag -a v0.13.0 -m "Sts2StateBridge v0.13.0"
 git push origin main
-git push origin v0.12.0
-gh release create v0.12.0 `
-  ".\release\Sts2StateBridge-MCP-v0.12.0.zip" `
-  --title "Sts2StateBridge v0.12.0" `
+git push origin v0.13.0
+gh release create v0.13.0 `
+  ".\release\Sts2StateBridge-MCP-v0.13.0.zip" `
+  --title "Sts2StateBridge v0.13.0" `
   --notes-file RELEASE_NOTES.md
 ```
 

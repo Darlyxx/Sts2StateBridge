@@ -20,7 +20,7 @@ class CountingBridge:
         self.calls += 1
         return {
             "schema_version": 2,
-            "bridge_version": "0.12.0",
+            "bridge_version": "0.13.0",
             "state_id": f"mcp-{self.calls}",
             "phase": "combat",
             "in_run": True,

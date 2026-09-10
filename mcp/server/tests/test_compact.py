@@ -97,7 +97,7 @@ def test_legacy_stars_are_normalized_to_mechanics_without_mutating_input():
 def test_combat_keeps_readiness_selection_dynamic_values_and_derived_summary():
     snapshot = {
         "schema_version": 2,
-        "bridge_version": "0.12.0",
+        "bridge_version": "0.13.0",
         "state_id": "combat-read-1",
         "phase": "combat",
         "in_run": True,
@@ -147,7 +147,11 @@ def test_combat_keeps_readiness_selection_dynamic_values_and_derived_summary():
                     "effects": [{"effect_type": "attack", "total": 12, "derived": True}],
                 }],
             }],
-            "actions": [{"action_id": "end_turn", "type": "end_turn"}],
+            "actions": [{
+                "action_id": "selection:select:choice-1",
+                "type": "selection_select",
+                "candidate_instance_id": "choice-1",
+            }],
         },
     }
 
@@ -156,4 +160,32 @@ def test_combat_keeps_readiness_selection_dynamic_values_and_derived_summary():
     assert combat["readiness"]["selection_pending"] is True
     assert combat["derived"]["estimated_unblocked_damage"] == 7
     assert combat["enemies"][0]["intents"][0]["effects"][0]["effect_type"] == "attack"
-    assert combat["actions"] == [{"action_id": "end_turn", "type": "end_turn"}]
+    assert combat["actions"][0]["type"] == "selection_select"
+    assert combat["actions"][0]["candidate_instance_id"] == "choice-1"
+
+
+def test_interaction_keeps_deck_enchant_selection_and_actions():
+    snapshot = {
+        "schema_version": 2,
+        "state_id": "enchant-1",
+        "phase": "run",
+        "in_run": True,
+        "in_combat": False,
+        "interaction": {
+            "type": "card_selection",
+            "ready": True,
+            "selection": {
+                "selection_type": "deck_enchant",
+                "selected_count": 1,
+                "confirmation_stage": "preview",
+                "confirm_enabled": True,
+                "candidates": [{"instance_id": "card-1", "selected": True}],
+            },
+            "actions": [{"action_id": "selection:confirm", "type": "selection_confirm"}],
+        },
+    }
+
+    interaction = compact_snapshot(snapshot)["interaction"]
+    assert interaction["selection"]["confirmation_stage"] == "preview"
+    assert interaction["selection"]["selected_count"] == 1
+    assert interaction["actions"][0]["action_id"] == "selection:confirm"

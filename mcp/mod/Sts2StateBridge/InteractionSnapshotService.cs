@@ -30,6 +30,7 @@ internal static class InteractionSnapshotService
                 "NSimpleCardsViewScreen" => BuildSimpleCardsView(scene!, screenType),
                 "NRestSiteRoom" => BuildRestSite(scene!, screenType),
                 "NDeckUpgradeSelectScreen" => BuildDeckUpgrade(scene!, screenType),
+                "NDeckEnchantSelectScreen" => BuildDeckEnchant(scene!, screenType),
                 "NTreasureRoom" or "NTreasureRoomRelicCollection" => BuildTreasure(scene!, screenType),
                 _ => new InteractionSnapshotPayload
                 {
@@ -112,7 +113,6 @@ internal static class InteractionSnapshotService
 
     private static InteractionSnapshotPayload BuildRewards(object screen, string screenType)
     {
-        object? set = ReflectionRead.Value(screen, "_rewardsSet", "RewardsSet");
         object[] buttons = ReflectionRead.Items(ReflectionRead.Value(screen, "_rewardButtons", "RewardButtons"))
             .Where(button => button is not CanvasItem canvas || canvas.IsVisibleInTree())
             .ToArray();
@@ -135,9 +135,24 @@ internal static class InteractionSnapshotService
         return new InteractionSnapshotPayload
         {
             Type = "combat_reward",
-            Ready = set is not null && !(ReflectionRead.Bool(screen, "IsComplete") ?? false),
+            Ready = options.Any(option => option.Enabled),
             ScreenType = screenType,
             Options = options.ToArray()
+        };
+    }
+
+    private static InteractionSnapshotPayload BuildDeckEnchant(object screen, string screenType)
+    {
+        CombatSelectionSnapshotPayload selection = CombatSelectionSnapshotService.BuildDeckEnchant(screen);
+        object? enchantment = ReflectionRead.Value(screen, "_enchantment");
+        return new InteractionSnapshotPayload
+        {
+            Type = "card_selection",
+            Ready = selection.Ready,
+            ScreenType = screenType,
+            Title = ReflectionRead.Localized(enchantment, "Title") ?? ReflectionRead.Text(enchantment, "Title", "Name"),
+            Description = enchantment is null ? null : ReflectionRead.ModelText(enchantment),
+            Selection = selection
         };
     }
 
@@ -456,13 +471,29 @@ internal static class InteractionSnapshotService
     internal static object? FindRelevantNode(object? root)
     {
         if (root is null) return null;
-        string[] relevant = ["NMapScreen", "NRewardsScreen", "NCardRewardSelectionScreen", "NEventRoom", "NMerchantInventory", "NMerchantRoom", "NDeckCardSelectScreen", "NSimpleCardsViewScreen", "NRestSiteRoom", "NDeckUpgradeSelectScreen", "NTreasureRoom", "NTreasureRoomRelicCollection"];
+        if (root is Node rootNode && root.GetType().Name != "NDeckEnchantSelectScreen")
+        {
+            object? overlay = FindNamedDescendant(rootNode, "NDeckEnchantSelectScreen");
+            if (overlay is not null) return overlay;
+        }
+        string[] relevant = ["NMapScreen", "NRewardsScreen", "NCardRewardSelectionScreen", "NEventRoom", "NMerchantInventory", "NMerchantRoom", "NDeckCardSelectScreen", "NSimpleCardsViewScreen", "NRestSiteRoom", "NDeckUpgradeSelectScreen", "NDeckEnchantSelectScreen", "NTreasureRoom", "NTreasureRoomRelicCollection"];
         if (relevant.Contains(root.GetType().Name) && IsActiveCandidate(root)) return root;
         if (root is not Node node) return null;
         foreach (Node child in node.GetChildren())
         {
             object? found = FindRelevantNode(child);
             if (found is not null) return found;
+        }
+        return null;
+    }
+
+    private static object? FindNamedDescendant(Node root, string typeName)
+    {
+        foreach (Node child in root.GetChildren())
+        {
+            if (child.GetType().Name == typeName && IsActiveCandidate(child)) return child;
+            object? nested = FindNamedDescendant(child, typeName);
+            if (nested is not null) return nested;
         }
         return null;
     }
@@ -532,6 +563,18 @@ internal static class InteractionSnapshotService
         InteractionSnapshotPayload interaction,
         RunState runState)
     {
+        if (interaction.Selection is not null)
+        {
+            return CombatSelectionSnapshotService.BuildActions(interaction.Selection).Select(action =>
+                new InteractionActionSnapshotPayload
+                {
+                    ActionId = action.ActionId,
+                    Type = action.Type,
+                    CandidateInstanceId = action.CandidateInstanceId,
+                    Label = action.Type
+                }).ToArray();
+        }
+
         if (!interaction.Ready)
         {
             return [];
@@ -660,6 +703,7 @@ internal sealed class InteractionSnapshotPayload
     [JsonPropertyName("options")] public InteractionOptionSnapshotPayload[] Options { get; init; } = [];
     [JsonPropertyName("actions")] public InteractionActionSnapshotPayload[] Actions { get; set; } = [];
     [JsonPropertyName("map")] public MapSnapshotPayload? Map { get; init; }
+    [JsonPropertyName("selection")] public CombatSelectionSnapshotPayload? Selection { get; init; }
 }
 
 internal sealed class InteractionActionSnapshotPayload
@@ -671,6 +715,7 @@ internal sealed class InteractionActionSnapshotPayload
     [JsonPropertyName("target_id")] public string? TargetId { get; init; }
     [JsonPropertyName("potion_slot")] public int? PotionSlot { get; init; }
     [JsonPropertyName("potion_instance_id")] public string? PotionInstanceId { get; init; }
+    [JsonPropertyName("candidate_instance_id")] public string? CandidateInstanceId { get; init; }
 }
 
 internal sealed class InteractionOptionSnapshotPayload

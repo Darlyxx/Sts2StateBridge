@@ -59,6 +59,7 @@ internal static class CombatSnapshotService
         };
 
         payload.Selection = selection;
+        CombatCardPlayLimit playLimit = BuildCardPlayLimit(payload.Hand);
         payload.Readiness = new CombatReadinessSnapshotPayload
         {
             Ready = stablePlayPhase && selection is null,
@@ -66,6 +67,9 @@ internal static class CombatSnapshotService
             InputLocked = !stablePlayPhase || selection is not null,
             AnimationInProgress = combatState.CurrentSide == CombatSide.Player && !stablePlayPhase,
             SelectionPending = selection is not null,
+            CardPlayLimit = playLimit.Limit,
+            CardsPlayableRemaining = playLimit.Remaining,
+            CardPlayLimitSource = playLimit.Source,
             Reason = selection is not null
                 ? "selection_pending"
                 : stablePlayPhase ? null : "not_stable_play_phase"
@@ -493,7 +497,18 @@ internal static class CombatSnapshotService
 
     private static CombatActionSnapshotPayload[] BuildActions(CombatSnapshotPayload snapshot)
     {
-        if (!snapshot.IsPlayerTurn)
+        if (snapshot.Selection is not null)
+        {
+            return CombatSelectionSnapshotService.BuildActions(snapshot.Selection).Select(action =>
+                new CombatActionSnapshotPayload
+                {
+                    ActionId = action.ActionId,
+                    Type = action.Type,
+                    CandidateInstanceId = action.CandidateInstanceId
+                }).ToArray();
+        }
+
+        if (!snapshot.IsPlayerTurn || snapshot.Readiness?.Ready != true)
         {
             return Array.Empty<CombatActionSnapshotPayload>();
         }
@@ -549,6 +564,17 @@ internal static class CombatSnapshotService
             Type = "end_turn"
         });
         return actions.ToArray();
+    }
+
+    private static CombatCardPlayLimit BuildCardPlayLimit(CombatHandCardSnapshotPayload[] hand)
+    {
+        CombatHandCardSnapshotPayload[] ringing = hand.Where(card =>
+            string.Equals(card.Affliction?.AfflictionId, "RINGING", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (ringing.Length == 0) return new(null, null, null);
+
+        bool spent = ringing.All(card => !card.Playable
+            && string.Equals(card.UnplayableReason, "blocked_by_hook", StringComparison.OrdinalIgnoreCase));
+        return new(1, spent ? 0 : 1, "RINGING");
     }
 
     internal static string GetInstanceId(object value, string fallback)
@@ -1450,6 +1476,9 @@ internal sealed class CombatActionSnapshotPayload
 
     [JsonPropertyName("target_index")]
     public int? TargetIndex { get; init; }
+
+    [JsonPropertyName("candidate_instance_id")]
+    public string? CandidateInstanceId { get; init; }
 }
 
 internal sealed class CombatReadinessSnapshotPayload
@@ -1459,8 +1488,13 @@ internal sealed class CombatReadinessSnapshotPayload
     [JsonPropertyName("input_locked")] public bool InputLocked { get; init; }
     [JsonPropertyName("animation_in_progress")] public bool AnimationInProgress { get; init; }
     [JsonPropertyName("selection_pending")] public bool SelectionPending { get; init; }
+    [JsonPropertyName("cards_playable_remaining")] public int? CardsPlayableRemaining { get; init; }
+    [JsonPropertyName("card_play_limit")] public int? CardPlayLimit { get; init; }
+    [JsonPropertyName("card_play_limit_source")] public string? CardPlayLimitSource { get; init; }
     [JsonPropertyName("reason")] public string? Reason { get; init; }
 }
+
+internal sealed record CombatCardPlayLimit(int? Limit, int? Remaining, string? Source);
 
 internal sealed class CombatDerivedSnapshotPayload
 {

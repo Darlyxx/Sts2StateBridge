@@ -71,6 +71,15 @@ internal static class GameActionService
 
     private static void ExecuteCombat(CombatActionSnapshotPayload candidate)
     {
+        if (candidate.Type.StartsWith("selection_", StringComparison.Ordinal))
+        {
+            object? selector = CombatSelectionSnapshotService.FindActive(
+                ActiveScreenContext.Instance.GetCurrentScreen());
+            if (selector is null) throw InteractionChanged("combat selection is no longer available");
+            CombatSelectionSnapshotService.Execute(selector, candidate.Type, candidate.CandidateInstanceId);
+            return;
+        }
+
         CombatState? combatState = CombatManager.Instance.DebugOnlyGetState();
         Player? player = combatState is null ? null : LocalContext.GetMe((ICombatState)combatState);
         if (combatState is null || player?.PlayerCombatState is null || !IsReady(player))
@@ -112,6 +121,13 @@ internal static class GameActionService
 
         switch (candidate.Type)
         {
+            case "selection_select":
+            case "selection_deselect":
+            case "selection_confirm":
+            case "selection_cancel":
+            case "selection_skip":
+                CombatSelectionSnapshotService.Execute(scene, candidate.Type, candidate.CandidateInstanceId);
+                break;
             case "claim_reward":
                 ClaimReward(scene, candidate);
                 break;

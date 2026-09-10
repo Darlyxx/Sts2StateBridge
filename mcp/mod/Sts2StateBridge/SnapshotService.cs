@@ -101,7 +101,7 @@ internal sealed class SnapshotPayload
     public int SchemaVersion { get; init; } = 2;
 
     [JsonPropertyName("bridge_version")]
-    public string BridgeVersion { get; init; } = "0.12.0";
+    public string BridgeVersion { get; init; } = "0.13.0";
 
     [JsonPropertyName("state_id")]
     public string? StateId { get; set; }
