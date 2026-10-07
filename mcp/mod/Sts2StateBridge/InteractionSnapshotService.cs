@@ -10,6 +10,7 @@ namespace Sts2StateBridge;
 
 internal static class InteractionSnapshotService
 {
+    private static readonly HashSet<string> ReportedFailures = [];
     public static InteractionSnapshotPayload Build(object? currentScreen, RunState runState)
     {
         string screenType = currentScreen?.GetType().Name ?? "unknown";
@@ -36,19 +37,30 @@ internal static class InteractionSnapshotService
                 {
                     Type = LooksTransitional(screenType) ? "transition" : "none",
                     Ready = false,
-                    ScreenType = screenType
+                    ScreenType = screenType,
+                    Reason = LooksTransitional(screenType) ? "screen_transition" : "unsupported_screen"
                 }
             };
             result.Actions = BuildActions(result, runState);
+            InteractionActionSnapshotPayload? navigation = MapNavigationService.Candidate(currentScreen);
+            if (result.Selection is null && navigation is not null)
+            {
+                result.Actions = [.. result.Actions, navigation];
+                result.Ready = true;
+                result.Reason = null;
+            }
             return result;
         }
-        catch
+        catch (Exception exception)
         {
+            if (ReportedFailures.Add($"{screenType}:{exception.GetType().Name}"))
+                MegaCrit.Sts2.Core.Logging.Log.Error($"[Sts2StateBridge] interaction read failed for {screenType}: {exception.GetType().Name}");
             return new InteractionSnapshotPayload
             {
                 Type = "unknown",
                 Ready = false,
-                ScreenType = screenType
+                ScreenType = screenType,
+                Reason = "interaction_read_failed"
             };
         }
     }
@@ -73,7 +85,8 @@ internal static class InteractionSnapshotService
                 Column = col,
                 NodeType = ReflectionRead.Text(point, "PointType"),
                 State = ReflectionRead.Text(node, "State"),
-                Reachable = ReflectionRead.Bool(node, "IsTravelable") ?? false,
+                Reachable = (ReflectionRead.Bool(node, "IsTravelable") ?? false)
+                    && ControlEnabled(node),
                 Children = ReflectionRead.Items(ReflectionRead.Value(point, "Children"))
                     .Select(child =>
                     {
@@ -89,6 +102,7 @@ internal static class InteractionSnapshotService
             Type = "map",
             Ready = (ReflectionRead.Bool(screen, "IsOpen") ?? true)
                 && (ReflectionRead.Bool(screen, "IsTravelEnabled") ?? false)
+                && ReflectionRead.Bool(screen, "_isInputDisabled") == false
                 && !(ReflectionRead.Bool(screen, "IsTraveling") ?? false),
             ScreenType = screenType,
             Map = new MapSnapshotPayload
@@ -384,15 +398,15 @@ internal static class InteractionSnapshotService
                 };
             }).ToList();
         object? proceed = ReflectionRead.Value(room, "ProceedButton", "_proceedButton");
-        if (options.Count == 0 && proceed is CanvasItem proceedCanvas && proceedCanvas.IsVisibleInTree())
+        if (ControlEnabled(proceed))
         {
             options.Add(new InteractionOptionSnapshotPayload
             {
-                OptionId = "rest:proceed", Index = 0, Kind = "proceed",
+                OptionId = "rest:proceed", Index = options.Count, Kind = "proceed",
                 Label = "proceed", Enabled = true
             });
         }
-        return new InteractionSnapshotPayload { Type = "rest_site", Ready = options.Count > 0, ScreenType = screenType, Options = options.ToArray() };
+        return new InteractionSnapshotPayload { Type = "rest_site", Ready = options.Any(option => option.Enabled), ScreenType = screenType, Options = options.ToArray() };
     }
 
     private static InteractionSnapshotPayload BuildDeckUpgrade(object screen, string screenType)
@@ -696,7 +710,8 @@ internal static class InteractionSnapshotService
 internal sealed class InteractionSnapshotPayload
 {
     [JsonPropertyName("type")] public required string Type { get; init; }
-    [JsonPropertyName("ready")] public bool Ready { get; init; }
+    [JsonPropertyName("ready")] public bool Ready { get; set; }
+    [JsonPropertyName("reason")] public string? Reason { get; set; }
     [JsonPropertyName("screen_type")] public required string ScreenType { get; init; }
     [JsonPropertyName("title")] public string? Title { get; init; }
     [JsonPropertyName("description")] public string? Description { get; init; }

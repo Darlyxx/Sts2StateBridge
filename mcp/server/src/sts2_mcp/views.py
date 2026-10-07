@@ -54,7 +54,7 @@ def clean(value: Any) -> Any:
         return {
             key: clean(item)
             for key, item in value.items()
-            if item is not None and item != [] and item != {}
+            if item is not None and (key == "actions" or (item != [] and item != {}))
         }
     if isinstance(value, list):
         return [clean(item) for item in value]

@@ -181,7 +181,10 @@ internal static class ReflectionRead
                         .All(matches => matches));
             if (method is not null)
             {
-                return method.Invoke(value, arguments);
+                object? result = method.Invoke(value, arguments);
+                if (result is Task task)
+                    BackgroundTaskObserver.Observe(task, $"{value.GetType().Name}.{methodName}");
+                return result;
             }
             type = type.BaseType;
         }

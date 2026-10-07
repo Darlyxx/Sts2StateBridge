@@ -26,7 +26,7 @@ internal static class GameThread
         }
     }
 
-    public static Task<T> InvokeAsync<T>(Func<T> action)
+    public static Task<T> InvokeAsync<T>(Func<T> action, CancellationToken cancellationToken = default)
     {
         SynchronizationContext? context;
         int threadId;
@@ -44,6 +44,7 @@ internal static class GameThread
 
         if (Environment.CurrentManagedThreadId == threadId)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(action());
         }
 
@@ -54,7 +55,12 @@ internal static class GameThread
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 completion.TrySetResult(action());
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                completion.TrySetCanceled(cancellationToken);
             }
             catch (Exception exception)
             {

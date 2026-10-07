@@ -5,13 +5,13 @@ from typing import Any
 
 RUN_KEYS = {"character_id", "character_name", "current_hp", "max_hp", "gold", "floor", "act_number", "act_floor", "act_id", "ascension", "deck", "relics", "potions"}
 COMBAT_KEYS = {"round", "current_side", "is_player_turn", "readiness", "selection", "derived", "player", "hand", "enemies", "piles", "potions", "relics", "actions"}
-INTERACTION_KEYS = {"type", "ready", "screen_type", "title", "description", "options", "actions", "map", "treasure", "player_gold", "selection"}
+INTERACTION_KEYS = {"type", "ready", "reason", "screen_type", "title", "description", "options", "actions", "map", "treasure", "player_gold", "selection"}
 
 
 def _drop_empty(value: Any) -> Any:
     if isinstance(value, dict):
         cleaned = {key: _drop_empty(item) for key, item in value.items()}
-        return {key: item for key, item in cleaned.items() if item is not None and item != [] and item != {}}
+        return {key: item for key, item in cleaned.items() if item is not None and (key == "actions" or (item != [] and item != {}))}
     if isinstance(value, list):
         return [_drop_empty(item) for item in value]
     return value
@@ -34,6 +34,8 @@ def _compact_map(map_data: Any) -> dict:
     return {
         "current_node_id": current,
         "reachable_node_ids": map_data.get("reachable_node_ids", []),
+        # Preserve the revealed graph: next-hop nodes alone cannot support routing.
+        "nodes": [node for node in nodes if isinstance(node, dict)],
         "relevant_nodes": [node for node in nodes if isinstance(node, dict) and node.get("node_id") in relevant_ids],
     }
 

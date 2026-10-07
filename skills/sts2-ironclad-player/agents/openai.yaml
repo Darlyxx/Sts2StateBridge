@@ -1,7 +1,7 @@
 interface:
   display_name: "STS2 Ironclad Player"
-  short_description: "进阶10战士自主战斗、构筑与路线决策手册"
-  default_prompt: "Use $sts2-ironclad-player to autonomously play the current Ironclad run."
+  short_description: "提供战士基础教学、战斗构筑与路线建议，并在明确授权后自主爬塔"
+  default_prompt: "Use $sts2-ironclad-player to inspect the current Ironclad run and advise me; act only within my explicit authorization."
 
 dependencies:
   tools:

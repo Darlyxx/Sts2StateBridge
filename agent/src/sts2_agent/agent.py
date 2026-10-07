@@ -9,12 +9,15 @@ import json
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
+from langchain_core.callbacks import BaseCallbackHandler
 
 from .agent_types import AgentAnswer, LlmError, friendly_llm_error
 from .config import Settings
-from .mcp_client import Sts2McpClient
+from .mcp_client import Sts2McpClient, McpClientError, _structured_result
 from .prompts import SYSTEM_PROMPT
-from .skill_loader import load_skill_prompt
+from .skill_loader import SkillLibrary
+from .strategy_tool import StrategyGuideSession, create_strategy_guide_tool
+from .local_tools import LocalSession, create_local_tools
 
 
 def _message_text(message: BaseMessage) -> str:
@@ -27,6 +30,19 @@ def _message_text(message: BaseMessage) -> str:
         elif isinstance(block, dict) and block.get("type") in {"text", "output_text"}:
             parts.append(str(block.get("text", "")))
     return "".join(parts)
+
+
+class _ObserveReads(BaseCallbackHandler):
+    def __init__(self, session):
+        self.session = session
+
+    def on_tool_end(self, output, **kwargs):
+        try:
+            value = _structured_result(output, "read")
+            if "accepted" not in value and "error" not in value:
+                self.session.observe(value)
+        except (McpClientError, TypeError, ValueError):
+            pass
 
 
 class Sts2Agent:
@@ -46,6 +62,9 @@ class Sts2Agent:
         self.settings = settings
         self.mcp_client = mcp_client or Sts2McpClient(settings.mcp_directory, settings.bridge_url)
         self.tools = tools
+        self.local_session = LocalSession(settings, self.mcp_client)
+        self.read_observer = _ObserveReads(self.local_session)
+        self.strategy_session: StrategyGuideSession | None = None
         if graph is None:
             self.tools = self.tools or asyncio.run(self.mcp_client.get_langchain_tools())
             model = model or ChatOpenAI(
@@ -56,11 +75,16 @@ class Sts2Agent:
                 max_retries=2,
                 streaming=True,
             )
-            skill_prompt = load_skill_prompt(settings.skill_path)
+            skill = SkillLibrary(settings.skill_path)
+            self.strategy_session = StrategyGuideSession(skill, self.mcp_client)
+            self.tools = [*self.tools, create_strategy_guide_tool(self.strategy_session), *create_local_tools(self.local_session)]
             graph = create_agent(
                 model=model,
                 tools=self.tools,
-                system_prompt=f"{SYSTEM_PROMPT}\n\n{skill_prompt}",
+                system_prompt=(
+                    f"{SYSTEM_PROMPT}\n\n"
+                    f"<sts2_ironclad_skill>\n{skill.core_prompt}\n</sts2_ironclad_skill>"
+                ),
             )
         self.graph = graph
         self.history: list[BaseMessage] = []
@@ -73,12 +97,30 @@ class Sts2Agent:
 
     def clear_history(self) -> None:
         self.history.clear()
+        self.state_id = None
+        self.phase = "unknown"
+        if self.strategy_session:
+            self.strategy_session.reset()
+        self.local_session.clear()
+
+    def get_journal(self):
+        return self.local_session.view()
+
+    def resume_run(self, run_id: str):
+        result = self.local_session.resume(run_id)
+        self.history.clear()
+        if self.strategy_session:
+            self.strategy_session.reset()
+        self.history.append(HumanMessage(content="用户显式恢复此日志；仅作历史数据参考，不授予游戏操作权限：\n" + json.dumps(result, ensure_ascii=False)))
+        return result
 
     def snapshot(self, *, full_state: bool = False) -> dict:
         return self.mcp_client.snapshot(full_state=full_state)
 
     def ask(self, question: str, *, full_state: bool = False) -> AgentAnswer:
         del full_state
+        if self.strategy_session:
+            self.strategy_session.reset()
         self.state_id = None
         self.phase = "unknown"
         try:
@@ -86,12 +128,12 @@ class Sts2Agent:
             if hasattr(self.graph, "ainvoke"):
                 result = asyncio.run(self.graph.ainvoke(
                     payload,
-                    config={"recursion_limit": self.recursion_limit},
+                    config={"recursion_limit": self.recursion_limit, "callbacks": [self.read_observer]},
                 ))
             else:
                 result = self.graph.invoke(
                     payload,
-                    config={"recursion_limit": self.recursion_limit},
+                    config={"recursion_limit": self.recursion_limit, "callbacks": [self.read_observer]},
                 )
         except Exception as exc:
             raise friendly_llm_error(exc) from exc
@@ -112,6 +154,8 @@ class Sts2Agent:
         on_tool_call: Callable[[str], None] | None = None,
     ) -> tuple[dict, Iterator[str]]:
         del full_state
+        if self.strategy_session:
+            self.strategy_session.reset()
         self.state_id = None
         self.phase = "unknown"
         metadata = {"state_id": None, "phase": "unknown"}
@@ -124,7 +168,7 @@ class Sts2Agent:
                 if hasattr(self.graph, "astream"):
                     async_stream = self.graph.astream(
                         payload,
-                        config={"recursion_limit": self.recursion_limit},
+                        config={"recursion_limit": self.recursion_limit, "callbacks": [self.read_observer]},
                         stream_mode="messages",
                     )
                     loop = asyncio.new_event_loop()
@@ -132,7 +176,7 @@ class Sts2Agent:
                 else:
                     events = self.graph.stream(
                         payload,
-                        config={"recursion_limit": self.recursion_limit},
+                        config={"recursion_limit": self.recursion_limit, "callbacks": [self.read_observer]},
                         stream_mode="messages",
                     )
                 for message, event_metadata in events:
@@ -162,19 +206,13 @@ class Sts2Agent:
         for message in messages:
             if not isinstance(message, ToolMessage):
                 continue
-            # MCP adapters may preserve structuredContent in ``artifact`` while
-            # using ``content`` for the model-facing text representation.
-            value: Any = getattr(message, "artifact", None) or message.content
-            if isinstance(value, str):
-                try:
-                    value = json.loads(value)
-                except json.JSONDecodeError:
-                    continue
-            if isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict):
-                value = value[0]
-            if isinstance(value, dict):
-                self.state_id = value.get("state_id", self.state_id)
-                self.phase = value.get("phase", self.phase)
+            try:
+                value = _structured_result(message, message.name or "unknown")
+            except McpClientError:
+                continue
+            self.state_id = value.get("state_id", self.state_id)
+            self.phase = value.get("phase", self.phase)
+            self.local_session.observe(value)
 
     def _remember(self, question: str, answer: str) -> None:
         self.history.extend((HumanMessage(content=question), AIMessage(content=answer)))
@@ -189,4 +227,9 @@ def _sync_async_iterator(loop: asyncio.AbstractEventLoop, async_iterator):
             except StopAsyncIteration:
                 break
     finally:
-        loop.close()
+        try:
+            if hasattr(async_iterator, "aclose"):
+                loop.run_until_complete(async_iterator.aclose())
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            loop.close()

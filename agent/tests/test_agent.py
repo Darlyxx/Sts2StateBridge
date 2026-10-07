@@ -17,6 +17,7 @@ class FakeCompletions:
         self.calls.append(kwargs)
         if kwargs["stream"]:
             return iter([
+                SimpleNamespace(choices=[]),
                 SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="先打"))]),
                 SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="痛击"))]),
             ])
@@ -37,6 +38,8 @@ def test_ask_returns_state_metadata_and_records_history():
     assert completions.calls[0]["model"] == "deepseek-v4-flash"
     assert "state-7" in completions.calls[0]["messages"][-1]["content"]
     assert len(agent.history) == 2
+    assert "只读" in completions.calls[0]["messages"][0]["content"]
+    assert "get_current_strategy_guide" not in completions.calls[0]["messages"][0]["content"]
 
 
 def test_stream_collects_answer_for_memory():

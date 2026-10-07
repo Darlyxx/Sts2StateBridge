@@ -72,7 +72,9 @@ class Sts2McpClient:
 
 
 def _structured_result(result: Any, tool_name: str) -> dict:
-    value = result.artifact if isinstance(result, ToolMessage) else result
+    if isinstance(result, ToolMessage) and result.status == "error":
+        raise McpClientError(f"MCP 工具 {tool_name} 返回错误，请重新读取状态或检查连接。")
+    value = (result.artifact or result.content) if isinstance(result, ToolMessage) else result
     if isinstance(value, dict) and "structured_content" in value:
         value = value["structured_content"]
     if isinstance(value, str):

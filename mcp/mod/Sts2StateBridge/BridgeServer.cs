@@ -49,7 +49,16 @@ internal static class BridgeServer
             while (listener.IsListening)
             {
                 HttpListenerContext context = await listener.GetContextAsync().ConfigureAwait(false);
-                await RespondAsync(context).ConfigureAwait(false);
+                try
+                {
+                    await RespondAsync(context).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    // A disconnected client must not take down the listener.
+                    Log.Error($"[Sts2StateBridge] HTTP request failed: {exception.GetType().Name}");
+                    try { context.Response.Abort(); } catch (Exception) { /* Already disconnected. */ }
+                }
             }
         }
         catch (HttpListenerException) when (!listener.IsListening)
@@ -172,26 +181,34 @@ internal static class BridgeServer
                     "{\"error\":\"invalid_request\",\"message\":\"state_id and action_id are required\"}");
             }
 
+            using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(2));
+            CancellationToken token = deadline.Token;
             Task<ActionResponsePayload> actionTask = GameThread.InvokeAsync(
-                () => GameActionService.Execute(actionRequest));
+                () => GameActionService.Execute(actionRequest, token), token);
             Task completedTask = await Task.WhenAny(
                     actionTask,
                     Task.Delay(TimeSpan.FromSeconds(2)))
                 .ConfigureAwait(false);
             if (completedTask != actionTask)
             {
+                deadline.Cancel();
                 _ = actionTask.ContinueWith(
                     task => _ = task.Exception,
                     CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted,
                     TaskScheduler.Default);
                 return ((int)HttpStatusCode.ServiceUnavailable,
-                    "{\"error\":\"action_unavailable\",\"message\":\"game thread timeout\"}");
+                    "{\"error\":\"action_timeout\",\"message\":\"queued work cancelled; if execution already started its outcome is unknown; refresh snapshot before any further action\"}");
             }
 
             ActionResponsePayload result = await actionTask.ConfigureAwait(false);
             Log.Info($"[Sts2StateBridge] accepted action {result.ActionType} for state {result.StateId}");
             return ((int)HttpStatusCode.Accepted, JsonSerializer.Serialize(result));
+        }
+        catch (OperationCanceledException)
+        {
+            return ((int)HttpStatusCode.ServiceUnavailable,
+                "{\"error\":\"action_timeout\",\"message\":\"request expired before execution; refresh snapshot\"}");
         }
         catch (ActionRequestException exception)
         {
@@ -231,7 +248,8 @@ internal static class BridgeServer
 
         using StreamReader reader = new(request.InputStream, request.ContentEncoding, false, 1024, false);
         char[] buffer = new char[MaxActionBodyCharacters + 1];
-        int count = await reader.ReadBlockAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+        using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(2));
+        int count = await reader.ReadBlockAsync(buffer.AsMemory(), deadline.Token).ConfigureAwait(false);
         if (count > MaxActionBodyCharacters)
         {
             throw new InvalidDataException("request body exceeds the 8192 character limit");
@@ -258,7 +276,8 @@ internal static class BridgeServer
     {
         try
         {
-            Task<SnapshotPayload> snapshotTask = GameThread.InvokeAsync(SnapshotService.Capture);
+            using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(2));
+            Task<SnapshotPayload> snapshotTask = GameThread.InvokeAsync(SnapshotService.Capture, deadline.Token);
             Task completedTask = await Task.WhenAny(
                     snapshotTask,
                     Task.Delay(TimeSpan.FromSeconds(2)))
@@ -266,6 +285,7 @@ internal static class BridgeServer
 
             if (completedTask != snapshotTask)
             {
+                deadline.Cancel();
                 _ = snapshotTask.ContinueWith(
                     task => _ = task.Exception,
                     CancellationToken.None,

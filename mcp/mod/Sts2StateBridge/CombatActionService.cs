@@ -16,9 +16,10 @@ internal static class GameActionService
 {
     private static string? _lastAcceptedStateId;
 
-    public static ActionResponsePayload Execute(ActionRequestPayload request)
+    public static ActionResponsePayload Execute(ActionRequestPayload request, CancellationToken cancellationToken = default)
     {
         SnapshotPayload snapshot = SnapshotService.Capture();
+        cancellationToken.ThrowIfCancellationRequested();
         if (!string.Equals(request.StateId, snapshot.StateId, StringComparison.Ordinal))
         {
             throw new ActionRequestException(
@@ -71,6 +72,11 @@ internal static class GameActionService
 
     private static void ExecuteCombat(CombatActionSnapshotPayload candidate)
     {
+        if (candidate.Type == "close_map")
+        {
+            MapNavigationService.Execute(ActiveScreenContext.Instance.GetCurrentScreen(), candidate.Type);
+            return;
+        }
         if (candidate.Type.StartsWith("selection_", StringComparison.Ordinal))
         {
             object? selector = CombatSelectionSnapshotService.FindActive(
@@ -108,6 +114,11 @@ internal static class GameActionService
 
     private static void ExecuteInteraction(InteractionActionSnapshotPayload candidate)
     {
+        if (candidate.Type is "open_map" or "close_map")
+        {
+            MapNavigationService.Execute(ActiveScreenContext.Instance.GetCurrentScreen(), candidate.Type);
+            return;
+        }
         RunState? runState = RunManager.Instance.DebugOnlyGetState();
         object? scene = InteractionSnapshotService.FindRelevantNode(
             ActiveScreenContext.Instance.GetCurrentScreen());
@@ -245,7 +256,7 @@ internal static class GameActionService
         {
             throw InteractionChanged("potion is no longer discardable");
         }
-        _ = PotionCmd.Discard(potion);
+        BackgroundTaskObserver.Observe(PotionCmd.Discard(potion), "discard_potion");
     }
 
     private static void SelectRestOption(object scene, InteractionActionSnapshotPayload candidate)
@@ -330,13 +341,15 @@ internal static class GameActionService
         if (scene.GetType().Name != "NMapScreen"
             || !(ReflectionRead.Bool(scene, "IsOpen") ?? false)
             || !(ReflectionRead.Bool(scene, "IsTravelEnabled") ?? false)
+            || ReflectionRead.Bool(scene, "_isInputDisabled") != false
             || (ReflectionRead.Bool(scene, "IsTraveling") ?? false))
             throw InteractionChanged("map is not ready for travel");
 
         object? node = ReflectionRead.Items(ReflectionRead.Value(scene, "_mapPointDictionary", "MapPointDictionary"))
             .Select(entry => ReflectionRead.Value(entry, "Value") ?? entry)
             .FirstOrDefault(value => string.Equals(MapNodeId(value), candidate.TargetId, StringComparison.Ordinal));
-        if (node is null || !(ReflectionRead.Bool(node, "IsTravelable") ?? false))
+        if (node is null || !(ReflectionRead.Bool(node, "IsTravelable") ?? false)
+            || !InteractionSnapshotService.ControlEnabled(node))
             throw InteractionChanged("map node is no longer reachable");
         ReflectionRead.Invoke(node, "OnRelease");
     }

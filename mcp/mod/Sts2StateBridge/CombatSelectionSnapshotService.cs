@@ -29,6 +29,10 @@ internal static class CombatSelectionSnapshotService
 
     internal static object? FindActive(object? root, bool includeDeckEnchant = false)
     {
+        // Never operate a selector behind a map, pause menu or another modal.
+        string? rootType = root?.GetType().Name;
+        if (rootType != "NCombatRoom" && rootType != "NDeckEnchantSelectScreen"
+            && (rootType is null || !CombatScreens.Contains(rootType))) return null;
         object? selector = null;
         try { selector = CardSelectCmd.LocalSelector; } catch { }
         if (selector is not null && CombatScreens.Contains(selector.GetType().Name) && IsActive(selector)) return selector;

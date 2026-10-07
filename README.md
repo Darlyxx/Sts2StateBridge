@@ -4,6 +4,8 @@
 
 ## 架构
 
+开发中的流程可靠性修复与待验收项见 [代码审查记录](CODE_REVIEW.md)。新增地图入口和返回动作仅在游戏原生按钮可见、启用时出现；`accepted=true` 表示已接受，仍需重新读取快照确认结果。本轮修改尚未部署或发布。
+
 ```text
 游戏
   ↕ 本机 HTTP（127.0.0.1:38281）
@@ -40,7 +42,7 @@ mcp/server                     独立 stdio MCP Server
 
 - Mod：`0.13.0`，目标游戏 `v0.111.0`，使用 `.NET 9`
 - MCP Server：`0.13.0`，Python 3.11+
-- Agent：`0.7.0`，Python 3.11+
+- Agent：`0.9.0`，Python 3.11+
 - Bridge：`http://127.0.0.1:38281`，只监听本机
 - 写操作：默认关闭，必须由本机配置明确开启
 
@@ -167,7 +169,7 @@ Windows JSON 中一个 `\` 必须写成 `\\`。`127.0.0.1` 表示每个用户自
 ## 使用项目自带 Agent
 
 Agent 默认使用 LangChain，通过独立 MCP Server 读取游戏。DeepSeek 或其他 OpenAI 兼容服务只需修改 URL、Key 和模型名。
-默认还会加载内置的 `sts2-ironclad-player` Skill，指导廉价模型以单人进阶 10 通关率为目标操作战士。Skill 是策略提示与参考知识，不是执行代码；真正读取和执行仍由 MCP 工具完成。
+Agent 0.9.0 默认加载重构的 `sts2-ironclad-player` Skill，支持建议与明确授权后的自主操作，重点为单人战士 A10。基础、战斗、构筑、路线、经济、遭遇和失败恢复按需加载；新增本地算术分析与独立编号的对局日志。Skill 不保证胜率，游戏事实和动作仍由原有 MCP 提供；Mod/MCP 保持 0.13.0，本轮无需重新部署。
 
 ```powershell
 cd agent
@@ -189,7 +191,7 @@ STS2_SKILL_PATH=
 
 完整仓库中两个路径变量留空即可自动找到 `mcp/server` 与内置 Skill。只询问状态或分析时 Agent 不会执行动作；明确要求“开始、继续或完成战斗/房间/爬塔”后，Agent 可在该范围内自主调用合法动作，无需逐步确认。首次状态不是 `IRONCLAD` 时，不应用战士策略。
 
-若要替换策略，把 `STS2_SKILL_PATH` 指向一个包含 `SKILL.md` 和 `references/ironclad-playbook.md` 的目录。文件缺失或不是 UTF-8 时 Agent 会停止并明确报错。
+若要替换策略，把 `STS2_SKILL_PATH` 指向一个包含 `SKILL.md` 以及 `references/combat.md`、`drafting.md`、`routing.md`、`economy.md`、`encounters.md` 和 `failure-cases.md` 的目录。必要文件缺失或不是 UTF-8 时 Agent 会停止并明确报错。
 
 单次提问：
 
@@ -215,12 +217,26 @@ print(answer.text, answer.phase, answer.state_id)
 
 ### 给第三方 Agent 使用 Skill
 
-第三方 Agent 可把以下两个文件按顺序合并进系统提示，然后继续使用本项目 MCP：
+第三方 Agent 可安装完整 `skills/sts2-ironclad-player` 文件夹，按入口路由读取参考。能执行 Python 的 Host 可用标准库分析/日志脚本；只能调用 MCP、不能读文件或执行脚本的 Host，需要手动注入相关文档。`sources.md` 仅供审计。新增本地工具不加入独立 MCP。详见 [Agent 与 Skill 使用说明](agent/README.md)。
 
-- `skills/sts2-ironclad-player/SKILL.md`
-- `skills/sts2-ironclad-player/references/ironclad-playbook.md`
+终端新增 `/journal`、`/resume-run <id>`；日志保存在系统本地数据目录，可用 `STS2_JOURNAL_DIR` 更改。新局先 `/clear`，旧局显式恢复，不自动合并/删除。动作接受不等于完成。日志被模型读取时会发送给你配置的服务，请勿保存秘密。
 
-`references/sources.md` 用于审计资料版本和偏差，不需要注入模型。精确卡牌文本、费用、敌人意图和合法动作始终以最新 MCP 快照为准，Skill 中的经验不能覆盖当前游戏状态。
+### Skill 离线评测
+
+仓库包含 34 个接近真实 schema 的固定教学场景，允许多个合理答案并区分安全错误与策略分歧。普通测试验证计算、日志、接入和数据，不调用模型：
+
+```powershell
+cd agent
+uv run pytest
+```
+
+默认评测命令不调用 API；显式添加 `--run-model` 才会付费调用。报告保存模型/配置/Skill 与案例指纹；单步匹配率不是通关率，策略分歧需人工复核：
+
+```powershell
+uv run python evals/run_skill_eval.py
+uv run python evals/run_skill_eval.py --run-model --model 你的模型名 --limit 5
+uv run python evals/run_skill_eval.py --run-model --without-skill
+```
 
 ## 依赖与测试
 
@@ -252,7 +268,7 @@ python -m pip install -r requirements.txt
 - MCP Server 不持有模型 API Key，也不访问模型服务。
 - 写操作默认关闭，并受 `state_id`、动作候选白名单和单次消费保护。
 - 读取、校验与动作入队均在 Godot 主线程执行。
-- 不上传存档、遥测或游戏状态，不暴露未揭示内容。
+- Bridge/MCP 不向外网上传存档、遥测或状态，也不暴露隐藏随机信息。使用可选 Agent 时，模型读取的游戏状态及所调用的日志内容会发送给你配置的模型服务。
 
 ## 常见问题
 

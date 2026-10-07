@@ -23,6 +23,7 @@ class Settings:
     mcp_directory: Path = Path(__file__).resolve().parents[3] / "mcp" / "server"
     skill_path: Path = DEFAULT_SKILL_PATH
     timeout_seconds: float = 60.0
+    journal_directory: Path | None = None
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
@@ -51,4 +52,6 @@ class Settings:
             .resolve(),
             skill_path=Path(configured_skill_path or DEFAULT_SKILL_PATH).expanduser().resolve(),
             timeout_seconds=timeout,
+            journal_directory=Path(os.environ["STS2_JOURNAL_DIR"]).expanduser().resolve()
+            if os.getenv("STS2_JOURNAL_DIR", "").strip() else None,
         )

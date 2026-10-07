@@ -40,6 +40,9 @@ Sts2StateBridge.config.json
 *.log
 logs/
 screenshots/
+.run-state/
+journals/
+eval-results/
 
 # Python Agent and MCP Server
 __pycache__/

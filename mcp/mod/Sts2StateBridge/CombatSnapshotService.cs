@@ -29,7 +29,12 @@ internal static class CombatSnapshotService
         CombatSelectionSnapshotPayload? selection = CombatSelectionSnapshotService.Build(currentScreen);
         string turnPhase = SafeRead(() => player.PlayerCombatState.Phase.ToString()) ?? "Unknown";
         bool stablePlayPhase = combatState.CurrentSide == CombatSide.Player
-            && string.Equals(turnPhase, "Play", StringComparison.OrdinalIgnoreCase);
+            && string.Equals(turnPhase, "Play", StringComparison.OrdinalIgnoreCase)
+            && !CombatManager.Instance.IsPaused
+            && !CombatManager.Instance.PlayerActionsDisabled
+            && !CombatManager.Instance.IsOverOrEnding
+            && !CombatManager.Instance.IsExecutingCardOrPotionEffect(player);
+        bool screenBlocked = currentScreen?.GetType().Name != "NCombatRoom";
 
         CombatSnapshotPayload payload = new()
         {
@@ -62,9 +67,9 @@ internal static class CombatSnapshotService
         CombatCardPlayLimit playLimit = BuildCardPlayLimit(payload.Hand);
         payload.Readiness = new CombatReadinessSnapshotPayload
         {
-            Ready = stablePlayPhase && selection is null,
+            Ready = stablePlayPhase && selection is null && !screenBlocked,
             PlayerTurnPhase = turnPhase,
-            InputLocked = !stablePlayPhase || selection is not null,
+            InputLocked = !stablePlayPhase || selection is not null || screenBlocked,
             AnimationInProgress = combatState.CurrentSide == CombatSide.Player && !stablePlayPhase,
             SelectionPending = selection is not null,
             CardPlayLimit = playLimit.Limit,
@@ -72,10 +77,19 @@ internal static class CombatSnapshotService
             CardPlayLimitSource = playLimit.Source,
             Reason = selection is not null
                 ? "selection_pending"
+                : screenBlocked ? "screen_overlay_open"
                 : stablePlayPhase ? null : "not_stable_play_phase"
         };
         payload.Derived = BuildDerived(payload);
         payload.Actions = BuildActions(payload);
+        if (currentScreen?.GetType().Name == "NMapScreen"
+            && MapNavigationService.Candidate(currentScreen) is { } navigation)
+        {
+            payload.Actions = [new CombatActionSnapshotPayload
+            {
+                ActionId = navigation.ActionId, Type = navigation.Type
+            }];
+        }
         return payload;
     }
 
@@ -491,7 +505,11 @@ internal static class CombatSnapshotService
         {
             Derived = true,
             VisibleIncomingAttackDamage = totalIncoming,
-            EstimatedUnblockedDamage = Math.Max(0, totalIncoming - snapshot.Player.Block)
+            EstimatedUnblockedDamage = Math.Max(0, totalIncoming - snapshot.Player.Block),
+            HasUnknownAttackValues = snapshot.Enemies.Where(enemy => enemy.IsAlive != false)
+                .Any(enemy => enemy.Intents.Length == 0 || enemy.Intents.Any(intent =>
+                    intent.IntentType is null || (intent.IntentType.Contains("Attack", StringComparison.OrdinalIgnoreCase)
+                        && intent.TotalDamage is null)))
         };
     }
 
@@ -1499,6 +1517,9 @@ internal sealed record CombatCardPlayLimit(int? Limit, int? Remaining, string? S
 internal sealed class CombatDerivedSnapshotPayload
 {
     [JsonPropertyName("derived")] public bool Derived { get; init; }
+    [JsonPropertyName("calculation_basis")] public string CalculationBasis => "visible_attack_totals_minus_current_block_only";
+    [JsonPropertyName("is_exact_hp_loss")] public bool IsExactHpLoss => false;
+    [JsonPropertyName("has_unknown_attack_values")] public bool HasUnknownAttackValues { get; init; }
     [JsonPropertyName("visible_incoming_attack_damage")] public int VisibleIncomingAttackDamage { get; init; }
     [JsonPropertyName("estimated_unblocked_damage")] public int EstimatedUnblockedDamage { get; init; }
 }

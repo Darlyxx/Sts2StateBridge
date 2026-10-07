@@ -14,7 +14,7 @@ def test_combat_keeps_decision_data_and_drops_unknown_fields():
     assert "unknown" not in compact["combat"]
 
 
-def test_map_only_keeps_current_and_reachable_nodes():
+def test_map_keeps_revealed_graph_and_current_reachable_subset():
     snapshot = {
         "state_id": "map1", "phase": "run", "in_run": True, "in_combat": False, "run": {"gold": 10},
         "interaction": {"type": "map", "ready": True, "map": {
@@ -24,6 +24,20 @@ def test_map_only_keeps_current_and_reachable_nodes():
     }
     nodes = compact_snapshot(snapshot)["interaction"]["map"]["relevant_nodes"]
     assert [node["node_id"] for node in nodes] == ["map:1:1", "map:2:1"]
+    assert len(compact_snapshot(snapshot)["interaction"]["map"]["nodes"]) == 3
+
+
+def test_empty_actions_and_unavailable_reason_remain_explicit():
+    from sts2_mcp.views import interaction_view, combat_state_view
+
+    snapshot = {"phase": "run", "state_id": "blocked", "interaction": {
+        "type": "unknown", "ready": False, "reason": "unsupported_screen", "actions": [],
+    }}
+    interaction = interaction_view(snapshot)["interaction"]
+    assert interaction["actions"] == []
+    assert interaction["reason"] == "unsupported_screen"
+    combat = combat_state_view({"phase": "combat", "combat": {"actions": []}})
+    assert combat["combat"]["actions"] == []
 
 
 def test_interaction_keeps_only_current_action_candidates():

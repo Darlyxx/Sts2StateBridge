@@ -25,6 +25,6 @@
 - 目标游戏：Slay the Spire 2 `v0.111.0`。
 - Mod 与 MCP Server：`0.13.0`。
 - 快照 schema 保持 `2`；新增字段向后兼容。
-- Agent 与 Skill 未修改。
+- 可选 Agent 已独立升级到 `0.9.0`：战士 Skill 按场景加载，加入离线算术分析、本机对局日志与 34 个固定评测案例；Mod 与 MCP Server 仍保持 `0.13.0`。真实模型策略效果由用户另行验证。
 
 本版本先提交代码并进行游戏内监督验收；Release ZIP 和 GitHub Release 在验收通过后另行生成。

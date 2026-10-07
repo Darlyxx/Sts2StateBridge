@@ -67,6 +67,23 @@ def test_langchain_reads_metadata_from_mcp_structured_artifact():
     assert (agent.state_id, agent.phase) == ("artifact-state", "combat")
 
 
+def test_adapter_wrapped_metadata_and_text_blocks():
+    agent, _ = make_agent()
+    for kwargs in [
+        {"content": "result", "artifact": {"structured_content": {"state_id": "new", "phase": "run"}}},
+        {"content": [{"type": "text", "text": '{"state_id":"new","phase":"run"}'}]},
+    ]:
+        agent._update_metadata([ToolMessage(**kwargs, tool_call_id="read", name="get_interaction")])
+        assert (agent.state_id, agent.phase) == ("new", "run")
+
+
+def test_tool_error_cannot_replace_metadata():
+    agent, _ = make_agent()
+    agent._update_metadata([ToolMessage(content='{"state_id":"bad","phase":"run"}',
+        status="error", tool_call_id="failed")])
+    assert (agent.state_id, agent.phase) == (None, "unknown")
+
+
 class ToolCallingFakeModel(GenericFakeChatModel):
     def bind_tools(self, tools, **kwargs):
         object.__setattr__(self, "bound_tools", tools)
@@ -87,7 +104,13 @@ def test_real_langchain_graph_executes_read_tool_then_answers():
     answer = agent.ask("读取战斗状态")
     assert answer.text == "读取完成。[state_id: state-lc]"
     assert (answer.state_id, answer.phase) == ("state-lc", "combat")
-    assert {bound_tool.name for bound_tool in model.bound_tools} == {"get_combat_state"}
+    assert {bound_tool.name for bound_tool in model.bound_tools} == {
+        "get_combat_state",
+        "get_current_strategy_guide",
+        "analyze_current_state",
+        "get_run_journal",
+        "record_run_decision",
+    }
 
 
 def test_status_question_reads_but_does_not_execute():
@@ -121,6 +144,12 @@ def test_status_question_reads_but_does_not_execute():
 def test_authorized_battle_executes_then_refreshes_state():
     calls = []
 
+    class SnapshotOnlyMcpClient:
+        def snapshot(self, *, full_state=False):
+            assert full_state is True
+            calls.append("guide")
+            return {"state_id": "combat-1", "phase": "combat", "combat": {}, "run": {"character_id": "IRONCLAD"}}
+
     @tool
     def get_combat_state() -> str:
         """Read combat state."""
@@ -142,6 +171,11 @@ def test_authorized_battle_executes_then_refreshes_state():
     model = ToolCallingFakeModel(messages=iter([
         AIMessage(content="", tool_calls=[{"name": "get_combat_state", "args": {}, "id": "read-1"}]),
         AIMessage(content="", tool_calls=[{
+            "name": "get_current_strategy_guide",
+            "args": {},
+            "id": "guide-1",
+        }]),
+        AIMessage(content="", tool_calls=[{
             "name": "execute_action",
             "args": {"state_id": "combat-1", "action_id": "play-card-1"},
             "id": "act-1",
@@ -151,9 +185,50 @@ def test_authorized_battle_executes_then_refreshes_state():
     ]))
     agent = Sts2Agent(
         Settings(api_key="not-a-real-key"),
+        mcp_client=SnapshotOnlyMcpClient(),
         model=model,
         tools=[get_combat_state, execute_action],
     )
     answer = agent.ask("继续完成这场战斗")
-    assert calls == ["read", ("combat-1", "play-card-1"), "read"]
+    assert calls == ["read", "guide", ("combat-1", "play-card-1"), "read"]
     assert answer.state_id == "combat-2"
+
+
+def test_real_graph_analysis_then_journal_keeps_observed_versions(tmp_path):
+    class Client:
+        calls = 0
+
+        def snapshot(self, *, full_state=False):
+            assert full_state
+            self.calls += 1
+            return {"schema_version": 2, "state_id": "s1", "phase": "combat", "in_run": True,
+                    "run": {"character_id": "IRONCLAD", "ascension": 10, "floor": 8},
+                    "combat": {"player": {"energy": 3, "block": 0}, "enemies": [], "hand": [], "actions": []}}
+
+    @tool
+    def get_game_overview() -> dict:
+        """Read a test overview; no game access."""
+        return {"state_id": "s1", "phase": "combat"}
+
+    model = ToolCallingFakeModel(messages=iter([
+        AIMessage(content="", tool_calls=[{"name": "get_game_overview", "args": {}, "id": "read"}]),
+        AIMessage(content="", tool_calls=[{"name": "record_run_decision", "args": {
+            "source_state_id": "s1", "category": "plan", "summary": "先核对手牌与意图", "status": "proposed"}, "id": "log"}]),
+        AIMessage(content="", tool_calls=[{"name": "analyze_current_state", "args": {}, "id": "analyze"}]),
+        AIMessage(content="只分析，没有操作游戏。"),
+    ]))
+    client = Client()
+    agent = Sts2Agent(Settings(api_key="not-real", journal_directory=tmp_path), model=model,
+                      tools=[get_game_overview], mcp_client=client)
+    answer = agent.ask("分析并记录当前计划，不执行")
+    assert answer.state_id == "s1" and client.calls == 2
+    journal = agent.get_journal()
+    assert journal["record_count"] == 1
+    assert journal["recent_records"][0]["status"] == "proposed"
+    run_id = journal["run_id"]
+    agent.clear_history()
+    assert agent.get_journal()["run_id"] is None and agent.history == []
+    resumed = agent.resume_run(run_id)
+    assert resumed["identity_proven"] is False
+    assert len(agent.history) == 1
+    assert agent.local_session.seen_states == {"s1"}
